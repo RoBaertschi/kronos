@@ -1,0 +1,4 @@
+timeout: 5
+/KronOS
+    protocol: limine
+    path: boot():/boot/kronos

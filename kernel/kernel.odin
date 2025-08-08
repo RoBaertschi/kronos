@@ -33,7 +33,7 @@ Limine_Framebuffer :: struct {
 Limine_Framebuffer_Response :: struct {
     revision:          u64,
     framebuffer_count: u64,
-    modes:             [^]^Limine_Framebuffer,
+    framebuffers:     [^]^Limine_Framebuffer,
 }
 
 Limine_Framebuffer_Request :: struct {
@@ -57,7 +57,26 @@ framebuffer_request := Limine_Framebuffer_Request{
     revision = 0,
 }
 
+LIMINE_BASE_REVISION_SUPPORTED :: #force_inline proc "contextless"() -> bool {
+    return limine_base_revision[2] == 0
+}
+
 @(export, link_name="_start")
 kmain :: proc "sysv" () {
+    if !LIMINE_BASE_REVISION_SUPPORTED() {
+        halt_catch_fire()
+    }
+
+    if framebuffer_request.response == nil || framebuffer_request.response.framebuffer_count < 1 {
+        halt_catch_fire()
+    }
+
+    framebuffer := framebuffer_request.response.framebuffers[0]
+
+    for i in 0..<100 {
+        fb_ptr := cast([^]u32) framebuffer.address
+        fb_ptr[u64(i) * (framebuffer.pitch / 4) + u64(i)] = 0xffffff
+    }
+
     halt_catch_fire()
 }

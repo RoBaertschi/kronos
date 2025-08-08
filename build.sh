@@ -1,3 +1,6 @@
+mkdir -p bin
+
+
 odin build kernel -out:bin/kernel   \
     -build-mode:obj                 \
     -target:freestanding_amd64_sysv \
@@ -13,7 +16,7 @@ odin build kernel -out:bin/kernel   \
 
 nasm kernel/kernel.asm -o bin/kernel.o -f elf64
 
-ld bin/*.o -o bin/kernel.elf \
+ld bin/*.o -o bin/kronos.elf \
     -m elf_x86_64            \
     -nostdlib                \
     -static                  \
@@ -21,4 +24,4 @@ ld bin/*.o -o bin/kernel.elf \
     --no-dynamic-linker      \
     -z text                  \
     -z max-page-size=0x1000  \
-    -T kernel/link.ld 
+    -T kernel/link.ld
