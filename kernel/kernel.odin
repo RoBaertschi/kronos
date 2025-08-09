@@ -4,6 +4,7 @@ package kronos_kernel
 
 foreign kernel {
     halt_catch_fire :: proc "sysv"() -> ! ---
+    enable_sse :: proc "sysv"() ---
 }
 
 LIMINE_COMMON_MAGIC1 :: 0xc7b1dd30df4c8b88
@@ -63,6 +64,9 @@ LIMINE_BASE_REVISION_SUPPORTED :: #force_inline proc "contextless"() -> bool {
 
 @(export, link_name="_start")
 kmain :: proc "sysv" () {
+    enable_sse()
+
+
     if !LIMINE_BASE_REVISION_SUPPORTED() {
         halt_catch_fire()
     }
