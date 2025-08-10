@@ -10,14 +10,14 @@ section .text
 ; si value
 ; does not return anything
 outb:
-    mov DX, DI
-    mov RAX, RSI
-    out DX, AL
+    mov dx, di
+    mov rax, rsI
+    out dx, al
     ret
 
 ; di port
 ; returns a byte
 inb:
-    mov DX, DI
-    in AL, DX
+    mov dx, di
+    in al, dx
     ret

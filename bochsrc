@@ -1,0 +1,23 @@
+cpu: count=2, reset_on_triple_fault=0
+# cpuid: apic=xapic
+
+display_library: x, options="gui_debug"
+
+memory: guest=4096, host=2048
+
+clock: sync=realtime, time0=local
+
+# ata0-master: type=disk, path="ros.hdd", mode=flat
+ata0-slave: type=cdrom, path=image.iso,status=inserted
+
+boot: cdrom
+
+log: ./bochsout.txt
+
+mouse: enabled=1
+
+magic_break: enabled=1
+
+# sound: driver=dummy
+
+com1: enabled=1, mode=file, dev=serial.txt

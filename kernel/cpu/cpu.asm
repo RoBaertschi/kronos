@@ -3,6 +3,8 @@ bits 64
 
 global halt_catch_fire
 global enable_sse
+global set_gdt
+
 
 section .text
 
@@ -21,3 +23,18 @@ enable_sse:
     or ax, 3 << 9
     mov cr4, rax
     ret
+
+; DI  limit
+; rsi base
+set_gdt:
+    mov [rel gdtr], di
+    mov [rel gdtr+2], RSI
+    lea rdi, [rel gdtr]
+    lgdt [rdi]
+    ret
+
+
+section .data
+gdtr DW 0 ; limit
+     DQ 0 ; base
+
