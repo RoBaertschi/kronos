@@ -29,8 +29,7 @@ enable_sse:
 set_gdt:
     mov [rel gdtr], di
     mov [rel gdtr+2], RSI
-    lea rdi, [rel gdtr]
-    lgdt [rdi]
+    lgdt [rel gdtr]
     ret
 
 
