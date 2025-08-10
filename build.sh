@@ -13,9 +13,15 @@ step "==> Cleaning old Kernel"
 rm -rfv bin
 mkdir -pv bin
 
+step "==> Setting up environment"
+run export ODIN_ROOT="$(pwd)/kernel/odin-rt"
+
 step "==> Building Kernel"
 
+# TODO(robin): Switch to another build mode for automatic assembly compilation
 run odin build kernel -out:bin/kernel   \
+    -debug                          \
+    -collection:kernel=kernel       \
     -build-mode:obj                 \
     -target:freestanding_amd64_sysv \
     -no-crt                         \
@@ -25,10 +31,12 @@ run odin build kernel -out:bin/kernel   \
     -disable-red-zone               \
     -default-to-nil-allocator       \
     -vet                            \
+    -print-linker-flags             \
     -strict-style
     # -foreign-error-procedures       \
 
-run nasm kernel/kernel.asm -o bin/kernel.o -f elf64
+run nasm kernel/cpu/cpu.asm -o bin/kronos-cpu.asm.o -f elf64
+run nasm kernel/serial/serial.asm -o bin/kronos-serial.asm.o -f elf64
 
 run ld bin/*.o -o bin/kronos.elf \
     -m elf_x86_64            \

@@ -1,11 +1,8 @@
 package kronos_kernel
 
-@require foreign import kernel "kernel.asm"
-
-foreign kernel {
-    halt_catch_fire :: proc "sysv"() -> ! ---
-    enable_sse :: proc "sysv"() ---
-}
+import "base:runtime"
+import "kernel:cpu"
+import "kernel:serial"
 
 LIMINE_COMMON_MAGIC1 :: 0xc7b1dd30df4c8b88
 LIMINE_COMMON_MAGIC2 :: 0x0a82e883a194f07b
@@ -62,17 +59,47 @@ LIMINE_BASE_REVISION_SUPPORTED :: #force_inline proc "contextless"() -> bool {
     return limine_base_revision[2] == 0
 }
 
+quit :: proc() {
+    #force_no_inline runtime._cleanup_runtime()
+    cpu.halt_catch_fire()
+}
+
+// assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {
+//     #force_no_inline runtime._cleanup_runtime()
+//     assertion_contextless_failure_proc(prefix, message, loc)
+// }
+//
+// assertion_contextless_failure_proc :: proc "contextless" (prefix, message: string, loc: runtime.Source_Code_Location) -> ! {
+//     runtime.print_caller_location(loc)
+//     runtime.print_string(" ")
+//     runtime.print_string(prefix)
+//     if len(message) > 0 {
+//         runtime.print_string(": ")
+//         runtime.print_string(message)
+//     }
+//
+//     runtime.print_byte('\n')
+//     halt_catch_fire()
+// }
+
 @(export, link_name="_start")
 kmain :: proc "sysv" () {
-    enable_sse()
+    cpu.enable_sse()
+
+    context = runtime.default_context()
+    if serial.init() {
+        serial.write_string("Hello World!\n")
+    }
+
+    #force_no_inline runtime._startup_runtime()
 
 
     if !LIMINE_BASE_REVISION_SUPPORTED() {
-        halt_catch_fire()
+        quit()
     }
 
     if framebuffer_request.response == nil || framebuffer_request.response.framebuffer_count < 1 {
-        halt_catch_fire()
+        quit()
     }
 
     framebuffer := framebuffer_request.response.framebuffers[0]
@@ -82,5 +109,6 @@ kmain :: proc "sysv" () {
         fb_ptr[u64(i) * (framebuffer.pitch / 4) + u64(i)] = 0xffffff
     }
 
-    halt_catch_fire()
+    panic("Oh no!")
+    // quit()
 }
