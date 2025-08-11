@@ -1,6 +1,9 @@
 package runtime
 
-Thread_Local_Cleaner :: #type proc "odin" ()
+Thread_Local_Cleaner_Odin :: #type proc "odin" ()
+Thread_Local_Cleaner_Contextless :: #type proc "contextless" ()
+
+Thread_Local_Cleaner :: union #shared_nil {Thread_Local_Cleaner_Odin, Thread_Local_Cleaner_Contextless}
 
 @(private="file")
 thread_local_cleaners: [8]Thread_Local_Cleaner
@@ -29,6 +32,9 @@ run_thread_local_cleaners :: proc "odin" () {
 		if p == nil {
 			break
 		}
-		p()
+        switch v in p {
+        case Thread_Local_Cleaner_Odin:        v()
+        case Thread_Local_Cleaner_Contextless: v()
+        }
 	}
 }
