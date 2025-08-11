@@ -2,6 +2,8 @@ package kronos_kernel
 
 import "base:runtime"
 import "kernel:cpu"
+import "kernel:idt"
+_ :: idt
 import "kernel:serial"
 
 LIMINE_COMMON_MAGIC1 :: 0xc7b1dd30df4c8b88
@@ -84,7 +86,7 @@ quit :: proc() {
 
 gdt := [5]u64{}
 
-init_gdt :: proc() {
+gdt_init :: proc() {
     cpu.encode_gdt_entry(&gdt[0], {})
     cpu.encode_gdt_entry(&gdt[1], { limit = 0xFFFFF, access_byte = 0x9A, flags = 0xA })
     cpu.encode_gdt_entry(&gdt[2], { limit = 0xFFFFF, access_byte = 0x92, flags = 0xC })
@@ -92,6 +94,7 @@ init_gdt :: proc() {
     cpu.encode_gdt_entry(&gdt[4], { limit = 0xFFFFF, access_byte = 0xF2, flags = 0xC })
     cpu.set_gdt(len(gdt)*size_of(gdt[0]) - 1, uintptr(&gdt))
 }
+
 
 @(export, link_name="_start")
 kmain :: proc "sysv" () {
@@ -103,7 +106,7 @@ kmain :: proc "sysv" () {
     }
 
     #force_no_inline runtime._startup_runtime()
-    init_gdt()
+    gdt_init()
 
 
     if !LIMINE_BASE_REVISION_SUPPORTED() {
