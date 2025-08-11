@@ -6,6 +6,7 @@ foreign kernel {
     halt_catch_fire :: proc "sysv"() -> ! ---
     enable_sse :: proc "sysv"() ---
     set_gdt :: proc "sysv"(limit: u16, base: uintptr) ---
+    set_idt :: proc "sysv"(limit: u16, base: uintptr) ---
 }
 
 Gdt_Entry :: struct {

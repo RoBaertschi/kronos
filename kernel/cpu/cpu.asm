@@ -24,16 +24,25 @@ enable_sse:
     mov cr4, rax
     ret
 
-; DI  limit
+; di  limit
 ; rsi base
 set_gdt:
     mov [rel gdtr], di
-    mov [rel gdtr+2], RSI
+    mov [rel gdtr+2], rsi
     lgdt [rel gdtr]
     ret
 
+; di  limit
+; rsi base
+set_idt:
+    mov [rel idtr], di
+    mov [rel idtr+2], rsi
+    lidt [rel idtr]
+    ret
 
 section .data
 gdtr DW 0 ; limit
      DQ 0 ; base
 
+idtr DW 0 ; limit
+     DQ 0 ; base
