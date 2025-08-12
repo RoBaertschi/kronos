@@ -107,6 +107,7 @@ kmain :: proc "sysv" () {
 
     #force_no_inline runtime._startup_runtime()
     gdt_init()
+    idt.init()
 
 
     if !LIMINE_BASE_REVISION_SUPPORTED() {

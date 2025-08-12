@@ -4,6 +4,7 @@ bits 64
 global halt_catch_fire
 global enable_sse
 global set_gdt
+global set_idt
 
 
 section .text
@@ -35,9 +36,13 @@ set_gdt:
 ; di  limit
 ; rsi base
 set_idt:
+    cti
     mov [rel idtr], di
     mov [rel idtr+2], rsi
     lidt [rel idtr]
+    sti
+
+    int 0x80
     ret
 
 section .data

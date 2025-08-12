@@ -107,7 +107,7 @@ section .data
 global isr_stub_table
 isr_stub_table:
 %assign i 0
-%rep    256
+%rep    IDT_SIZE
     dq isr_stub_%+i
 %assign i i+1
 %endrep
