@@ -5,12 +5,6 @@ import "kernel:cpu"
 
 @require foreign import idt "idt.asm"
 
-@(export)
-exception_handler :: proc(interrupt: u8) {
-    runtime.print_u64(u64(interrupt))
-    cpu.halt_catch_fire()
-}
-
 Interrupt_Context :: struct {
     r15: u64,
     r14: u64,
@@ -35,6 +29,12 @@ Interrupt_Context :: struct {
     iret_flags: u64,
     iret_rsp: u64,
     iret_ss: u64,
+}
+
+@(export)
+exception_handler :: proc "sysv" (ctx: Interrupt_Context) {
+    runtime.print_u64(ctx.error_code)
+    cpu.halt_catch_fire()
 }
 
 IDT_SIZE :: 256 // sync with idt.asm
