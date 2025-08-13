@@ -41,8 +41,6 @@ set_idt:
     mov [rel idtr+2], rsi
     lidt [rel idtr]
     sti
-    mov rax, 0
-    div rax
     ret
 
 section .data
