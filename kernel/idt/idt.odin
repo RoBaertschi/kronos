@@ -34,8 +34,16 @@ Interrupt_Context :: struct {
 }
 
 @(export)
-exception_handler :: proc "sysv" (ctx: Interrupt_Context) {
-    runtime.print_u64(ctx.error_code)
+exception_handler :: proc "sysv" (ctx: ^Interrupt_Context) -> ^Interrupt_Context {
+    runtime.print_string(interrupt_get_mnemonic(u8(ctx.vector_number)))
+    runtime.print_string(" - ")
+    runtime.print_string(interrupt_name(u8(ctx.vector_number)))
+
+    if interrupt_has_error_code(u8(ctx.vector_number)) {
+        runtime.print_string(": ")
+        runtime.print_u64(ctx.error_code)
+    }
+    runtime.print_string("\n")
     cpu.halt_catch_fire()
 }
 

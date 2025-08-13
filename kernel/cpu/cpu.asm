@@ -36,13 +36,13 @@ set_gdt:
 ; di  limit
 ; rsi base
 set_idt:
-    cti
+    cli
     mov [rel idtr], di
     mov [rel idtr+2], rsi
     lidt [rel idtr]
     sti
-
-    int 0x80
+    mov rax, 0
+    div rax
     ret
 
 section .data

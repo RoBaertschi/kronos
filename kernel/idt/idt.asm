@@ -3,6 +3,7 @@ bits 64
 
 section .text
 
+extern exception_handler
 interrupt_stub:
     push rax
     push rbx
@@ -19,9 +20,9 @@ interrupt_stub:
     push r14
     push r15
 
-    mov rsp, rdi
+    mov rdi, rsp
     call exception_handler
-    mov rax, rsp
+    mov rsp, rax
 
     pop r15
     pop r14
@@ -59,8 +60,6 @@ isr_stub_%+%1:
     call interrupt_stub
     iretq
 %endmacro
-
-extern exception_handler
 
 %define IDT_SIZE 256
 
