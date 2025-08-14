@@ -67,6 +67,32 @@ Memmap_Entry :: struct {
     type:   Memmap_Type,
 }
 
+PAGING_MODE_REQUEST :: [4]u64{ COMMON_MAGIC1, COMMON_MAGIC2, 0x95c1a0edab0944cb, 0xa4e5cb3842f7488a }
+
+when ODIN_ARCH == .amd64 {
+    Paging_Mode :: enum u64 {
+        _4_Lvl = 0,
+        _5_Lvl = 1,
+    }
+
+    PAGING_MODE_DEFAULT :: Paging_Mode._4_Lvl
+    PAGING_MODE_MIN :: Paging_Mode._4_Lvl
+}
+
+Paging_Mode_Request :: struct {
+    id:       [4]u64,
+    revision: u64,
+    response: ^Paging_Mode_Response,
+    mode:     Paging_Mode,
+    max_mode: Paging_Mode,
+    min_mode: Paging_Mode,
+}
+
+Paging_Mode_Response :: struct {
+    revision: u64,
+    mode:     Paging_Mode,
+}
+
 @(export, link_section=".limine_requests_start")
 requests_start_marker := [4]u64{0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9}
 
@@ -90,4 +116,13 @@ framebuffer_request := Framebuffer_Request{
 memmap_request := Memmap_Request{
     id       = MEMMAP_REQUEST,
     revision = 0,
+}
+
+@(export, link_section=".limine_requests")
+paging_request := Paging_Mode_Request{
+    id       = PAGING_MODE_REQUEST,
+    revision = 0,
+    mode     = ._4_Lvl,
+    min_mode = ._4_Lvl,
+    max_mode = ._4_Lvl,
 }
