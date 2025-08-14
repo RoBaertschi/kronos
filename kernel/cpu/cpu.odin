@@ -8,6 +8,7 @@ foreign kernel {
     set_gdt :: proc "sysv"(limit: u16, base: uintptr) ---
     set_idt :: proc "sysv"(limit: u16, base: uintptr) ---
     get_cr3 :: proc "sysv"() -> u64 ---
+    set_cr3 :: proc "sysv"(val: u64) ---
 }
 
 Gdt_Entry :: struct {
