@@ -50,6 +50,8 @@ print_memmap :: proc(w: io.Writer) {
         runtime.print_string("No Memmap\n")
     } else {
         entries := response.entries[:response.entry_count]
+        total_accessible_memory: u64
+        total_reclaimable_memory: u64
 
         for entry, i in entries {
             fmt.wprintfln(w, "% 2d: % 15d - % 15d [len % 15d] = %v",
@@ -59,7 +61,14 @@ print_memmap :: proc(w: io.Writer) {
                 entry.length,
                 entry.type,
             )
+
+            #partial switch entry.type {
+            case .Usable: total_accessible_memory += entry.length
+            case .Acpi_Reclaimable, .Bootloader_Reclaimable: total_reclaimable_memory += entry.length
+            }
         }
+
+        fmt.wprintfln(w, "%d bytes usable memory({0:M}), %d bytes reclaimable memory({1:M})", total_accessible_memory, total_reclaimable_memory)
     }
 }
 
