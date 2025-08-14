@@ -1,7 +1,6 @@
 package kronos_allocator_physical
 
 import "base:runtime"
-_ :: runtime
 
 // N = Pages
 Allocator :: struct(N: int) \
@@ -123,7 +122,7 @@ allocator_calculate_required_blocks :: proc(size: int) -> (_32k_blocks, _16k_blo
     return
 }
 
-allocator_alloc_page :: proc(a: ^Allocator($N), size: int) -> int {
+allocator_alloc_pages :: proc(a: ^Allocator($N), size: int) -> (int, runtime.Allocator_Error) {
     _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
 
     ARR_LEN :: N / 64
@@ -182,7 +181,7 @@ allocator_alloc_page :: proc(a: ^Allocator($N), size: int) -> int {
                 allocator_set_4k(a, b+i_page)
             }
 
-            return i * i_page
+            return i * i_page,  nil
         }
     case _16k_blocks > 0:
         all_blocks: for i in 0..<MAX_16K_BLOCKS {
@@ -222,7 +221,7 @@ allocator_alloc_page :: proc(a: ^Allocator($N), size: int) -> int {
                 allocator_set_4k(a, b+i_page)
             }
 
-            return i * i_page
+            return i * i_page, nil
         }
     case _8k_blocks > 0:
         all_blocks: for i in 0..<MAX_8K_BLOCKS {
@@ -252,7 +251,7 @@ allocator_alloc_page :: proc(a: ^Allocator($N), size: int) -> int {
                 allocator_set_4k(a, b+i_page)
             }
 
-            return i * i_page
+            return i * i_page, nil
         }
     case pages > 0:
         all_blocks: for i in 0..<MAX_PAGES {
@@ -270,9 +269,13 @@ allocator_alloc_page :: proc(a: ^Allocator($N), size: int) -> int {
                 allocator_set_4k(a, b+i)
             }
 
-            return i
+            return i, nil
         }
     }
 
-    return 0
+    return -1, .Out_Of_Memory
+}
+
+allocator_free_pages :: proc(a: ^Allocator($N), page: int, size: int) -> (int, runtime.Allocator_Error) {
+    _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
 }
