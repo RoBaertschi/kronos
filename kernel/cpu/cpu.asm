@@ -25,6 +25,10 @@ enable_sse:
     mov cr4, rax
     ret
 
+get_cr3:
+    mov rax, cr3
+    ret
+
 ; di  limit
 ; rsi base
 set_gdt:
