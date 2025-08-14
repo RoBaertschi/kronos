@@ -6,6 +6,8 @@ import "kernel:limine"
 import "kernel:cpu"
 import "kernel:idt"
 import "kernel:serial"
+import ap "kernel:allocator/physical"
+_ :: ap
 
 import "core:fmt"
 import "core:io"
