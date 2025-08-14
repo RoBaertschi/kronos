@@ -113,6 +113,8 @@ isr_stub_table:
 
 global idt
 
+section .bss
+
 ALIGN 0x1000 ; Page size
 idt:
     times IDT_SIZE resq 2
