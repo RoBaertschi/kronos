@@ -6,6 +6,8 @@ import "kernel:limine"
 import "kernel:cpu"
 import "kernel:idt"
 import "kernel:serial"
+import "kernel:testing"
+import serial_writer "kernel:serial/writer"
 import ap "kernel:allocator/physical"
 _ :: ap
 
@@ -74,23 +76,6 @@ print_memmap :: proc(w: io.Writer) {
     }
 }
 
-serial_stream_proc : io.Stream_Proc : proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
-    _ = stream_data
-    _ = offset
-    _ = whence
-
-    #partial switch mode {
-    case .Write:
-        serial.write(p)
-        n = i64(len(p))
-        return
-    case .Query:
-        n = transmute(i64)io.Stream_Mode_Set{.Query, .Write}
-        return
-    case:
-        return
-    }
-}
 
 @(export, link_name="_start")
 kmain :: proc "sysv" () {
@@ -103,30 +88,31 @@ kmain :: proc "sysv" () {
 
     #force_no_inline runtime._startup_runtime()
 
-    writer := io.Writer{
-        procedure = serial_stream_proc,
-    }
+    writer := serial_writer.writer()
 
     gdt_init()
     idt.init()
     print_memmap(writer)
 
-
-    if !limine.BASE_REVISION_SUPPORTED() {
+    when testing.TESTING {
+        ap.run_tests()
         quit()
+    } else {
+        if !limine.BASE_REVISION_SUPPORTED() {
+            quit()
+        }
+
+        if limine.framebuffer_request.response == nil || limine.framebuffer_request.response.framebuffer_count < 1 {
+            quit()
+        }
+
+        framebuffer := limine.framebuffer_request.response.framebuffers[0]
+
+        for i in 0..<100 {
+            fb_ptr := cast([^]u32) framebuffer.address
+            fb_ptr[u64(i) * (framebuffer.pitch / 4) + u64(i)] = 0xffffff
+        }
+
+        panic("Oh no!")
     }
-
-    if limine.framebuffer_request.response == nil || limine.framebuffer_request.response.framebuffer_count < 1 {
-        quit()
-    }
-
-    framebuffer := limine.framebuffer_request.response.framebuffers[0]
-
-    for i in 0..<100 {
-        fb_ptr := cast([^]u32) framebuffer.address
-        fb_ptr[u64(i) * (framebuffer.pitch / 4) + u64(i)] = 0xffffff
-    }
-
-    panic("Oh no!")
-    // quit()
 }

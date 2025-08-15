@@ -1,5 +1,15 @@
 set -e
 
+if [[ -n "$1" ]]; then
+
+    case "$1" in
+        test) TESTING=true;;
+        *)    TESTING=false;;
+    esac
+else
+    TESTING=false
+fi
+
 function run() {
     echo "* $@"
     $@
@@ -32,6 +42,7 @@ run odin build kernel -out:bin/kernel   \
     -default-to-nil-allocator       \
     -vet                            \
     -print-linker-flags             \
+    -define:KRONOS_TESTING=$TESTING \
     -strict-style
     # -foreign-error-procedures       \
 
