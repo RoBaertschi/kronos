@@ -2,6 +2,10 @@ package kronos_allocator_physical
 
 import "base:runtime"
 
+import "core:io"
+
+import "kernel:utils"
+
 PAGE_SIZE :: 4 * runtime.Kilobyte
 
 // N = Pages
@@ -15,8 +19,6 @@ Allocator :: struct(N: int) \
     base: uintptr,
 }
 
-import "core:fmt"
-import "core:io"
 write_allocator :: proc(w: io.Writer, a: Allocator($N)) {
     fmt.wprintf(w, "Allocator($N=%d){{\n", N)
     fmt.wprintln(w, "    _4k = [")
@@ -90,40 +92,32 @@ allocator_is_page_free :: proc(a: Allocator($N), block: int) -> bool {
 }
 
 allocator_set_32k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    used := u8(1 if used else 0)
-
     idx, bit := allocator_get_32k(block)
-    a._32k[idx] |= used << bit
+    a._32k[idx] = utils.set_bit(a._32k[idx], bit, used)
 
-    allocator_set_16k(a, block * 2 + 0, bool(used))
-    allocator_set_16k(a, block * 2 + 1, bool(used))
+    allocator_set_16k(a, block * 2 + 0, used)
+    allocator_set_16k(a, block * 2 + 1, used)
 }
 
 allocator_set_16k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    used := u16(1 if used else 0)
-
     idx, bit := allocator_get_16k(block)
-    a._16k[idx] |= used << bit
+    a._16k[idx] = utils.set_bit(a._16k[idx], bit, used)
 
-    allocator_set_8k(a, block * 2 + 0, bool(used))
-    allocator_set_8k(a, block * 2 + 1, bool(used))
+    allocator_set_8k(a, block * 2 + 0, used)
+    allocator_set_8k(a, block * 2 + 1, used)
 }
 
 allocator_set_8k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    used := u32(1 if used else 0)
-
     idx, bit := allocator_get_8k(block)
-    a._8k[idx] |= used << bit
+    a._8k[idx] = utils.set_bit(a._8k[idx], bit, used)
 
-    allocator_set_4k(a, block * 2 + 0, bool(used))
-    allocator_set_4k(a, block * 2 + 1, bool(used))
+    allocator_set_4k(a, block * 2 + 0, used)
+    allocator_set_4k(a, block * 2 + 1, used)
 }
 
 allocator_set_4k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    used := u64(1 if used else 0)
-
     idx, bit := allocator_get_4k(block)
-    a._4k[idx] |= used << bit
+    a._4k[idx] = utils.set_bit(a._4k[idx], bit, used)
 }
 
 allocator_get_16k_offset :: proc(_32k_blocks: int) -> int {
@@ -429,12 +423,16 @@ allocator_free :: proc(a: ^Allocator($N), ptr: rawptr, size: int) -> (err: runti
 }
 
 allocator_free_pages :: proc(a: ^Allocator($N), page: int, size: int) -> (err: runtime.Allocator_Error) {
+    page := page
     _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
     if !allocator_check_blocks_alignment(page, _32k_blocks, _16k_blocks, _8k_blocks) {
         return .Invalid_Pointer
     }
 
     page_32k, page_16k, page_8k := allocator_page_to_blocks(page)
+    page_16k += allocator_get_16k_offset(_32k_blocks)
+    page_8k  += allocator_get_8k_offset(_32k_blocks, _16k_blocks)
+    page     += allocator_get_page_offset(_32k_blocks, _16k_blocks, _8k_blocks)
 
     for b in 0..<_32k_blocks {
         allocator_set_32k(a, b + page_32k, false)
@@ -491,6 +489,12 @@ when testing.TESTING {
         testing.expect_value(t, _16k_blocks, 0)
         testing.expect_value(t, _32k_blocks, 1)
 
+        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 64)
+        testing.expect_value(t, pages, 0)
+        testing.expect_value(t, _8k_blocks, 0)
+        testing.expect_value(t, _16k_blocks, 0)
+        testing.expect_value(t, _32k_blocks, 2)
+
         _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 36)
         testing.expect_value(t, pages, 1)
         testing.expect_value(t, _8k_blocks, 0)
@@ -514,11 +518,9 @@ when testing.TESTING {
         a := Allocator(64){}
 
         testing.expect(t, allocator_is_free(a, 0, PAGE_SIZE * 64))
-        write_allocator(t.writer, a)
         allocator_set_32k(&a, 0, true)
-        testing.expect(t, !allocator_is_free(a, 0, PAGE_SIZE * 32))
-        testing.expect(t, allocator_has_allocation(a, 0, PAGE_SIZE * 32))
-        write_allocator(t.writer, a)
+        testing.expect(t, !allocator_is_free(a, 0, runtime.Kilobyte * 32))
+        testing.expect(t, allocator_has_allocation(a, 0, runtime.Kilobyte * 32))
     }
 
     test_allocations :: proc(t: ^testing.T) {
