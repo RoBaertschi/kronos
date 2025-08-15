@@ -6,7 +6,7 @@ import "core:io"
 
 import "kernel:utils"
 
-PAGE_SIZE :: 4 * runtime.Kilobyte
+// PAGE_SIZE :: 4 * runtime.Kilobyte
 
 // N = Pages
 Allocator :: struct(N: int) \
@@ -459,9 +459,17 @@ import "kernel:testing"
 
 when testing.TESTING {
     run_tests :: proc() {
+        testing.run_test({ name = "test_physical_allocator2", system = "kronos_allocator_physical", p = test_physical_allocator2 })
         testing.run_test({ name = "test_blocks", system = "kronos_allocator_physical", p = test_blocks })
         testing.run_test({ name = "test_set_functions", system = "kronos_allocator_physical", p = test_set_functions })
         testing.run_test({ name = "test_allocations", system = "kronos_allocator_physical", p = test_allocations })
+    }
+
+    test_physical_allocator2 :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
+        write_allocator_usage(t.writer, a)
     }
 
     test_blocks :: proc(t: ^testing.T) {
