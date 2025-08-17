@@ -459,17 +459,14 @@ import "kernel:testing"
 
 when testing.TESTING {
     run_tests :: proc() {
+        testing.run_test({ name = "test_free", system = "kronos_allocator_physical", p = test_free })
+        testing.run_test({ name = "test_allocate", system = "kronos_allocator_physical", p = test_allocate })
+        testing.run_test({ name = "test_calculate_pages", system = "kronos_allocator_physical", p = test_calculate_pages })
+        testing.run_test({ name = "test_calculate_size", system = "kronos_allocator_physical", p = test_calculate_size })
         testing.run_test({ name = "test_physical_allocator2", system = "kronos_allocator_physical", p = test_physical_allocator2 })
         testing.run_test({ name = "test_blocks", system = "kronos_allocator_physical", p = test_blocks })
         testing.run_test({ name = "test_set_functions", system = "kronos_allocator_physical", p = test_set_functions })
         testing.run_test({ name = "test_allocations", system = "kronos_allocator_physical", p = test_allocations })
-    }
-
-    test_physical_allocator2 :: proc(t: ^testing.T) {
-        buf: [8]u8
-        a: Physical_Allocator
-        init_physical_allocator(&a, buf[:], 0)
-        write_allocator_usage(t.writer, a)
     }
 
     test_blocks :: proc(t: ^testing.T) {

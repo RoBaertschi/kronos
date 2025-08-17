@@ -42,18 +42,22 @@ _new_line :: proc(t: ^T) {
     }
 }
 
-expect_value :: proc(t: ^T, value, expected: $T, loc := #caller_location) {
+expect_value :: proc(t: ^T, value, expected: $T, loc := #caller_location) -> bool {
     if value != expected {
         _new_line(t)
         fmt.wprintfln(t.writer, "ASSERTION FAILED %v: %v != %v", loc, value, expected)
         t.error_count += 1
+        return false
     }
+    return true
 }
 
-expect :: proc(t: ^T, condition: bool, expr := #caller_expression(condition), loc := #caller_location) {
+expect :: proc(t: ^T, condition: bool, expr := #caller_expression(condition), loc := #caller_location) -> bool {
     if !condition {
         _new_line(t)
         fmt.wprintfln(t.writer, "ASSERTION FAILED %v: %v", loc, expr)
         t.error_count += 1
+        return false
     }
+    return true
 }
