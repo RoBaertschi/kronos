@@ -1,547 +1,409 @@
 package kronos_allocator_physical
 
 import "base:runtime"
+import "base:intrinsics"
 
 import "core:io"
+import "core:fmt"
+import "core:mem"
+import "core:math"
 
 import "kernel:utils"
+import sw "kernel:serial/writer"
+_ :: sw
 
-// PAGE_SIZE :: 4 * runtime.Kilobyte
+PAGE_SIZE :: 4 * runtime.Kilobyte
 
-// N = Pages
-Allocator :: struct(N: int) \
-    where (N % 64 == 0) && (N > 0) { // Ensure that the amount of pages fit nicely into u64's
-    _4k:  [N / 64]u64, // 8 bytes
-    _8k:  [N / 64]u32, // 4 bytes
-    _16k: [N / 64]u16, // 2 bytes
-    _32k: [N / 64]u8,  // 1 bytes
-
-    base: uintptr,
+Physical_Allocator :: struct {
+    base:   uintptr,
+    data:   []byte,
+    levels: int,
 }
 
-write_allocator :: proc(w: io.Writer, a: Allocator($N)) {
-    fmt.wprintf(w, "Allocator($N=%d){{\n", N)
-    fmt.wprintln(w, "    _4k = [")
-    for b in a._4k {
-        fmt.wprintfln(w, "        %0#64b", b)
-    }
-    fmt.wprintln(w, "    ],")
+MAX_LEVEL :: 7 // 512 KiB blocks
 
-    fmt.wprintln(w, "    _8k = [")
-    for b in a._8k {
-        fmt.wprintfln(w, "        %#32b", b)
-    }
-    fmt.wprintln(w, "    ],")
+init_physical_allocator :: proc(a: ^Physical_Allocator, data: []byte, base: uintptr) {
+    level := 1
+    x: int
 
-    fmt.wprintln(w, "    _16k = [")
-    for b in a._16k {
-        fmt.wprintfln(w, "        %#16b", b)
+    for level < MAX_LEVEL {
+        increment := int(math.pow2_f32(f32(level)))
+        x += increment
+        if x >= (len(data) * 8)-2 {
+            break
+        }
+        level += 1
     }
-    fmt.wprintln(w, "    ],")
 
-    fmt.wprintln(w, "    _32k = [")
-    for b in a._32k {
-        fmt.wprintfln(w, "        %#8b", b)
-    }
-    fmt.wprintln(w, "    ],")
-    fmt.wprintf(w, "    base = %v,\n}\n", a.base)
+    a.base = base
+    a.data = data
+    a.levels = level
 }
 
-allocator_get_32k :: proc(block: int) -> (idx: int, bit: u8) {
-    idx = block / 8
-    bit = u8(block % 8)
+get_level_page_size :: proc(level: int) -> int {
+    return int(math.pow2_f32(f32(level)))
+}
+
+get_bit_idx_in_bytes :: proc(i: int) -> (int, u8) {
+    return i / 8, u8(i % 8)
+}
+
+get_bit_in_bytes :: proc(bytes: []byte, i: int, loc := #caller_location) -> bool {
+    runtime.bounds_check_error_loc(loc, i, len(bytes) * 8)
+    idx, bit := get_bit_idx_in_bytes(i)
+    return ((bytes[idx] >> bit) & 0b1) != 0
+}
+
+set_bit_in_bytes :: proc(bytes: []byte, i: int, set: bool, loc := #caller_location) {
+    runtime.bounds_check_error_loc(loc, i, len(bytes) * 8)
+    idx, bit := get_bit_idx_in_bytes(i)
+    bytes[idx] = utils.set_bit(bytes[idx], bit, set)
+}
+
+get_level_pos :: proc(a: Physical_Allocator, level: int, loc := #caller_location) -> int {
+    runtime.bounds_check_error_loc(loc, level, a.levels)
+    e := math.pow2_f32(f32(level))
+    return int(f32(len(a.data) * 8) * (1 - 1 / e))
+}
+
+get_level_size :: proc(a: Physical_Allocator, level: int, loc := #caller_location) -> int {
+    return (((len(a.data) / 2) * 8) / int(math.pow2_f32(f32(level))))
+}
+
+get_level_bounds :: proc(a: Physical_Allocator, level: int, loc := #caller_location) -> (start, end: int) {
+    start = get_level_pos(a, level, loc)
+    end = get_level_size(a, level, loc) + start
     return
 }
 
-allocator_get_16k :: proc(block: int) -> (idx: int, bit: u8) {
-    idx = block / 16
-    bit = u8(block % 16)
+write_bit :: proc(w: io.Writer, value: bool) {
+    if value {
+        io.write_rune(w, '#')
+    } else {
+        io.write_rune(w, '.')
+    }
+}
+
+write_allocator_usage :: proc(w: io.Writer, a: Physical_Allocator) {
+    fmt.wprintfln(w, "Physical_Allocator(base = %v, levels = %v):", a.base, a.levels)
+
+    io.write_string(w, "         all: ")
+
+    root_level_start, root_level_end := get_level_bounds(a, 0)
+    for i in root_level_start..<root_level_end {
+        write_bit(w, get_bit_in_bytes(a.data, i))
+    }
+    io.write_rune(w, '\n')
+    io.write_rune(w, '\n')
+
+    for i in 0..<a.levels {
+        start, end := get_level_bounds(a, i)
+
+        fmt.wprintf(w, "% 3d..% 3d % 3d: ", start, end, i)
+        for j in start..<end {
+            write_bit(w, get_bit_in_bytes(a.data, j))
+
+            for _ in 1..<math.pow2_f32(f32(i)) {
+                io.write_rune(w, ' ')
+            }
+        }
+        fmt.wprintfln(w, "% 4dKiB % 3d Pages", int(math.pow2_f32(f32(i))) * 4, int(math.pow2_f32(f32(i))))
+    }
+}
+
+calculate_pages :: proc(a: Physical_Allocator, pages: int) -> (highest_pages: int, low_pages: u8) {
+    rest := pages
+
+    for i := a.levels-1; i >= 0 ; i -= 1 {
+        page_count := int(math.pow2_f32(f32(i)))
+        required := rest / page_count
+        rest -= required * page_count
+
+        // check if we are at the highest level of blocks (first iteration)
+        if i == a.levels-1 {
+            highest_pages = required
+        } else {
+            // fmt.wprintfln(sw.writer(), "pages = {} i = {} page_count = {} required = {} rest = {} highest_pages = {} low_pages = {:07b}", pages, i, page_count, required, rest, highest_pages, low_pages)
+            // any smaller block than the highest cannot be more than 1, because that would be a bigger block from the level before
+            ensure(required < 2)
+
+            // move all the bits to the left, because we go through the loop in reverse, this should move the highest level up
+            low_pages <<= 1
+            low_pages += u8(required)
+        }
+    }
+    ensure(rest == 0)
+
     return
 }
 
-allocator_get_8k :: proc(block: int) -> (idx: int, bit: u8) {
-    idx = block / 32
-    bit = u8(block % 32)
-    return
-}
+is_page_block_free :: proc(a: Physical_Allocator, block: int, level: int, loc := #caller_location) -> (free: bool) {
+    runtime.bounds_check_error_loc(loc, block, get_level_size(a, level))
+    start := get_level_pos(a, level)
 
-allocator_get_4k :: proc(block: int) -> (idx: int, bit: u8) {
-    idx = block / 64
-    bit = u8(block % 64)
-    return
-}
+    (!get_bit_in_bytes(a.data, start + block))  or_return
 
-allocator_is_32k_free :: proc(a: Allocator($N), block: int) -> bool {
-    idx, bit := allocator_get_32k(block)
-    return ((a._32k[idx] >> bit) & 0b1) == 0
-}
-
-allocator_is_16k_free :: proc(a: Allocator($N), block: int) -> bool {
-    idx, bit := allocator_get_16k(block)
-    return ((a._16k[idx] >> bit) & 0b1) == 0
-}
-
-allocator_is_8k_free :: proc(a: Allocator($N), block: int) -> bool {
-    idx, bit := allocator_get_8k(block)
-    return ((a._8k[idx] >> bit) & 0b1) == 0
-}
-
-allocator_is_page_free :: proc(a: Allocator($N), block: int) -> bool {
-    idx, bit := allocator_get_4k(block)
-    return ((a._4k[idx] >> bit) & 0b1) == 0
-}
-
-allocator_set_32k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    idx, bit := allocator_get_32k(block)
-    a._32k[idx] = utils.set_bit(a._32k[idx], bit, used)
-
-    allocator_set_16k(a, block * 2 + 0, used)
-    allocator_set_16k(a, block * 2 + 1, used)
-}
-
-allocator_set_16k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    idx, bit := allocator_get_16k(block)
-    a._16k[idx] = utils.set_bit(a._16k[idx], bit, used)
-
-    allocator_set_8k(a, block * 2 + 0, used)
-    allocator_set_8k(a, block * 2 + 1, used)
-}
-
-allocator_set_8k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    idx, bit := allocator_get_8k(block)
-    a._8k[idx] = utils.set_bit(a._8k[idx], bit, used)
-
-    allocator_set_4k(a, block * 2 + 0, used)
-    allocator_set_4k(a, block * 2 + 1, used)
-}
-
-allocator_set_4k :: proc(a: ^Allocator($N), block: int, used: bool) {
-    idx, bit := allocator_get_4k(block)
-    a._4k[idx] = utils.set_bit(a._4k[idx], bit, used)
-}
-
-allocator_get_16k_offset :: proc(_32k_blocks: int) -> int {
-    return _32k_blocks * 2
-}
-
-allocator_get_8k_offset :: proc(_32k_blocks, _16k_blocks: int) -> int {
-    return _32k_blocks * 4 + _16k_blocks * 2
-}
-
-allocator_get_page_offset :: proc(_32k_blocks, _16k_blocks, _8k_blocks: int) -> int {
-    return _32k_blocks * 8 + _16k_blocks * 4 + _8k_blocks * 2
-}
-
-allocator_has_allocation :: proc(a: Allocator($N), page: int, size: int) -> (has: bool) {
-    page := page
-    _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
-    assert(allocator_check_blocks_alignment(page, _32k_blocks, _16k_blocks, _8k_blocks))
-    at_32k, at_16k, at_8k := allocator_page_to_blocks(page)
-    at_16k += allocator_get_16k_offset(_32k_blocks)
-    at_8k += allocator_get_8k_offset(_32k_blocks, _16k_blocks)
-    page += allocator_get_page_offset(_32k_blocks, _16k_blocks, _8k_blocks)
-
-    for b in 0..<_32k_blocks {
-        (!allocator_is_32k_free(a, b + at_32k)) or_return
-    }
-
-    for b in 0..<_16k_blocks {
-        (!allocator_is_16k_free(a, b + at_16k)) or_return
-    }
-
-    for b in 0..<_8k_blocks {
-        (!allocator_is_8k_free(a, b + at_8k)) or_return
-    }
-
-    for b in 0..<pages {
-        (!allocator_is_page_free(a, b + page)) or_return
+    if level > 0 {
+        is_page_block_free(a, block * 2 + 0, level - 1) or_return
+        is_page_block_free(a, block * 2 + 1, level - 1) or_return
     }
 
     return true
 }
 
-allocator_is_free :: proc(a: Allocator($N), page: int, size: int) -> (has: bool) {
-    page := page
-    _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
-    assert(allocator_check_blocks_alignment(page, _32k_blocks, _16k_blocks, _8k_blocks))
-    at_32k, at_16k, at_8k := allocator_page_to_blocks(page)
-    at_16k += allocator_get_16k_offset(_32k_blocks)
-    at_8k  += allocator_get_8k_offset(_32k_blocks, _16k_blocks)
-    page += allocator_get_page_offset(_32k_blocks, _16k_blocks, _8k_blocks)
+set_page_block :: proc(a: ^Physical_Allocator, block: int, level: int, used: bool, loc := #caller_location) {
+    runtime.bounds_check_error_loc(loc, block, get_level_size(a^, level, loc))
+    start := get_level_pos(a^, level)
+    set_bit_in_bytes(a.data, start + block, used)
 
-    for b in 0..<_32k_blocks {
-        allocator_is_32k_free(a, b + at_32k) or_return
+    if level > 0 {
+        set_page_block(a, block * 2 + 0, level - 1, used)
+        set_page_block(a, block * 2 + 1, level - 1, used)
     }
-
-    for b in 0..<_16k_blocks {
-        allocator_is_16k_free(a, b + at_16k) or_return
-    }
-
-    for b in 0..<_8k_blocks {
-        allocator_is_8k_free(a, b + at_8k) or_return
-    }
-
-    for b in 0..<pages {
-        allocator_is_page_free(a, b + page) or_return
-    }
-
-    return true
 }
 
-allocator_page_to_blocks :: proc(page: int) -> (at_32k, at_16k, at_8k: int) {
-    at_32k = page / 8
-    at_16k = page / 4
-    at_8k  = page / 2
-
-    return
+calculate_size :: proc(a: Physical_Allocator, size: int) -> (highest_pages: int, low_pages: u8) {
+    pages := size / PAGE_SIZE
+    pages += size % PAGE_SIZE != 0 ? 1 : 0
+    return calculate_pages(a, pages)
 }
 
-// Check if page is correctly aligned
-allocator_check_block_size_alignment :: proc(page: int, size: int) -> (ok: bool) {
-    _32k_blocks, _16k_blocks, _8k_blocks, _ := allocator_calculate_required_blocks(size)
-    return allocator_check_blocks_alignment(page, _32k_blocks, _16k_blocks, _8k_blocks)
-}
+alloc_uninitalized_pages :: proc(a: ^Physical_Allocator, pages: int) -> (int, runtime.Allocator_Error) {
+    highest_pages, low_pages := calculate_pages(a^, pages)
 
-allocator_check_blocks_alignment :: proc(page: int, _32k_blocks, _16k_blocks, _8k_blocks: int) -> (ok: bool) {
-    if _32k_blocks > 0 {
-        (page % 8 == 0) or_return
+    if get_level_size(a^, a.levels-1) < highest_pages {
+        return -1, .Out_Of_Memory
     }
 
-    if _16k_blocks > 0 {
-        (page % 4 == 0) or_return
-    }
+    // the level where we gonna need the highest block
+    allocation_level := a.levels-1 if highest_pages > 0 else int(8-intrinsics.count_leading_zeros(low_pages))-1
+    allocation_level_page_count := int(math.pow2_f32(f32(allocation_level)))
 
-    if _8k_blocks > 0 {
-        (page % 2 == 0) or_return
-    }
-
-    return true
-}
-
-allocator_calculate_required_blocks :: proc(size: int) -> (_32k_blocks, _16k_blocks, _8k_blocks, pages: int) {
-    rest := size
-
-    _32k_blocks = rest / (runtime.Kilobyte * 32)
-    rest -= (runtime.Kilobyte * 32 * _32k_blocks)
-
-    _16k_blocks = rest / (runtime.Kilobyte * 16)
-    rest -= (runtime.Kilobyte * 16 * _16k_blocks)
-
-    _8k_blocks = rest / (runtime.Kilobyte * 8)
-    rest -= (runtime.Kilobyte * 8 * _8k_blocks)
-
-    pages = rest / (runtime.Kilobyte * 4)
-    rest -= (runtime.Kilobyte * 4 * pages)
-
-    if rest > 0 {
-        pages += 1
-    }
-    if pages == 2 {
-        pages = 0
-        _8k_blocks += 1
-    }
-
-    if _8k_blocks == 2 {
-        _8k_blocks = 0
-        _16k_blocks += 1
-    }
-
-    if _16k_blocks == 2 {
-        _16k_blocks = 0
-        _32k_blocks += 1
-    }
-
-    return
-}
-
-allocator_alloc :: proc(a: ^Allocator($N), size: int) -> (rawptr, runtime.Allocator_Error) {
-    page := allocator_alloc_pages(a, size) or_return
-    return a.base + uintptr(page * PAGE_SIZE), nil
-}
-
-// IMPORTANT: size is in bytes, not pages
-allocator_alloc_pages :: proc(a: ^Allocator($N), size: int) -> (int, runtime.Allocator_Error) {
-    _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
-
-    ARR_LEN :: N / 64
-    MAX_32K_BLOCKS :: N / 64 * 8
-    MAX_16K_BLOCKS :: N / 64 * 4
-    MAX_8K_BLOCKS :: N / 64 * 2
-    MAX_PAGES :: N / 64
-
-    switch {
-    case _32k_blocks > 0:
-        all_32k_blocks: for i in 0..<MAX_32K_BLOCKS {
-            if MAX_32K_BLOCKS-(i+_32k_blocks) < 0 {
-                break
+    // iterate trough each block
+    test_blocks: for i in 0..<get_level_size(a^, allocation_level) {
+        for p in i..<i+highest_pages {
+            // fmt.wprintln(sw.writer(), i, p, get_level_size(a^, allocation_level), allocation_level, highest_pages)
+            if !is_page_block_free(a^, p, allocation_level) {
+                // fmt.wprintln(sw.writer(), "page not free", p)
+                continue test_blocks
             }
-
-            for b in i..<_32k_blocks+i {
-                if !allocator_is_32k_free(a^, b) {
-                    continue all_32k_blocks
-                }
-            }
-
-            i_16k := i*2
-            for b in i_16k..<_16k_blocks+i_16k {
-                if !allocator_is_16k_free(a^, b) {
-                    continue all_32k_blocks
-                }
-            }
-
-            i_8k := i*4
-            for b in i_8k..<_8k_blocks+i_8k {
-                if !allocator_is_8k_free(a^, b) {
-                    continue all_32k_blocks
-                }
-            }
-
-            i_page := i*8
-            for p in i_page..<pages+i_page {
-                if !allocator_is_page_free(a^, p) {
-                    continue all_32k_blocks
-                }
-            }
-
-            for b in 0..<_32k_blocks {
-                allocator_set_32k(a, b+i, true)
-            }
-
-            for b in 0..<_16k_blocks {
-                allocator_set_16k(a, b+i_16k, true)
-            }
-
-            for b in 0..<_8k_blocks {
-                allocator_set_8k(a, b+i_8k, true)
-            }
-
-            for b in 0..<pages {
-                allocator_set_4k(a, b+i_page, true)
-            }
-
-            return i * i_page,  nil
         }
-    case _16k_blocks > 0:
-        all_16k_blocks: for i in 0..<MAX_16K_BLOCKS {
-            if MAX_16K_BLOCKS-(i+_16k_blocks) < 0 {
-                break
-            }
 
-            for b in i..<_16k_blocks+i {
-                if !allocator_is_16k_free(a^, b) {
-                    continue all_16k_blocks
-                }
-            }
+        actual_level := allocation_level if allocation_level != a.levels-1 else allocation_level-1
 
-            i_8k := i*2
-            for b in i_8k..<_8k_blocks+i_8k {
-                if !allocator_is_8k_free(a^, b) {
-                    continue all_16k_blocks
-                }
+        // in pages
+        offset := allocation_level_page_count * (i+highest_pages)
+        for level := actual_level; level >= 0; level -= 1 {
+            if !utils.get_bit(low_pages, u8(level)) {
+                continue
             }
+            // fmt.wprintln(sw.writer(), "level =", level, "actual_level =", actual_level, "allocation_level =", allocation_level, "a.levels =", a.levels)
 
-            i_page := i*4
-            for p in i_page..<pages+i_page {
-                if !allocator_is_page_free(a^, p) {
-                    continue all_16k_blocks
-                }
+            page_count := int(math.pow2_f32(f32(level)))
+            // if get_level_size(a^, level) <= offset / page_count {
+            //     continue
+            // }
+
+            if !is_page_block_free(a^, offset / page_count, level) {
+                // fmt.wprintln(sw.writer(), "page not free offset =", offset / page_count, "level =", level,
+                //     "i =", i, "allocation_level_page_count =", allocation_level_page_count,
+                //     "allocation_level =", allocation_level)
+                continue test_blocks
             }
-
-            for b in 0..<_16k_blocks {
-                allocator_set_16k(a, b+i, true)
-            }
-
-            for b in 0..<_8k_blocks {
-                allocator_set_8k(a, b+i_8k, true)
-            }
-
-            for b in 0..<pages {
-                allocator_set_4k(a, b+i_page, true)
-            }
-
-            return i * i_page, nil
+            offset += page_count
         }
-    case _8k_blocks > 0:
-        all_8k_blocks: for i in 0..<MAX_8K_BLOCKS {
-            if MAX_8K_BLOCKS-(i+_8k_blocks) < 0 {
-                break
-            }
 
-            for b in i..<_8k_blocks+i {
-                if !allocator_is_8k_free(a^, b) {
-                    continue all_8k_blocks
-                }
-            }
-
-            i_page := i*2
-            for p in i_page..<pages+i_page {
-                if !allocator_is_page_free(a^, p) {
-                    continue all_8k_blocks
-                }
-            }
-
-
-            for b in 0..<_8k_blocks {
-                allocator_set_8k(a, b+i, true)
-            }
-
-            for b in 0..<pages {
-                allocator_set_4k(a, b+i_page, true)
-            }
-
-            return i * i_page, nil
+        for p in i..<highest_pages+i {
+            set_page_block(a, p, allocation_level, true)
         }
-    case pages > 0:
-        all_pages: for i in 0..<MAX_PAGES {
-            if MAX_PAGES-(i+pages) < 0 {
-                break
-            }
 
-            for p in i..<pages+i {
-                if !allocator_is_page_free(a^, p) {
-                    continue all_pages
-                }
+        offset = allocation_level_page_count * (i+highest_pages)
+        for level := actual_level; level >= 0; level -= 1 {
+            if utils.get_bit(low_pages, u8(level)) {
+                page_count := int(math.pow2_f32(f32(level)))
+                set_page_block(a, offset / page_count, level, true)
+                offset += page_count
             }
-
-            for b in 0..<pages {
-                allocator_set_4k(a, b+i, true)
-            }
-
-            return i, nil
         }
+
+        return allocation_level_page_count * i, .None
     }
 
     return -1, .Out_Of_Memory
 }
 
-allocator_free :: proc(a: ^Allocator($N), ptr: rawptr, size: int) -> (err: runtime.Allocator_Error) {
-    if uintptr(ptr) < a.base || (uintptr(ptr) - a.base) % PAGE_SIZE != 0 {
+free_pages :: proc(a: ^Physical_Allocator, page: int, pages: int) -> (err: runtime.Allocator_Error) {
+    highest_pages, low_pages := calculate_pages(a^, pages)
+    allocation_level := a.levels-1
+    if highest_pages <= 0 {
+        allocation_level = int(8-intrinsics.count_leading_zeros(low_pages))-1
+    }
+    allocation_level_page_count := get_level_page_size(allocation_level)
+
+    actual_level := allocation_level if allocation_level != a.levels-1 else allocation_level-1
+
+    if page % allocation_level_page_count != 0 {
         return .Invalid_Pointer
     }
-    page := int(uintptr(ptr) - a.base) / PAGE_SIZE
-    return allocator_free_pages(a, page, size)
-}
 
-allocator_free_pages :: proc(a: ^Allocator($N), page: int, size: int) -> (err: runtime.Allocator_Error) {
-    page := page
-    _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(size)
-    if !allocator_check_blocks_alignment(page, _32k_blocks, _16k_blocks, _8k_blocks) {
-        return .Invalid_Pointer
+    highest_page_start := page / allocation_level_page_count
+    if highest_pages > 0 {
+        for p in highest_page_start..<highest_page_start+highest_pages {
+            set_page_block(a, p, allocation_level, false)
+        }
     }
 
-    page_32k, page_16k, page_8k := allocator_page_to_blocks(page)
-    page_16k += allocator_get_16k_offset(_32k_blocks)
-    page_8k  += allocator_get_8k_offset(_32k_blocks, _16k_blocks)
-    page     += allocator_get_page_offset(_32k_blocks, _16k_blocks, _8k_blocks)
-
-    for b in 0..<_32k_blocks {
-        allocator_set_32k(a, b + page_32k, false)
-    }
-
-    for b in 0..<_16k_blocks {
-        allocator_set_16k(a, b + page_16k, false)
-    }
-
-    for b in 0..<_8k_blocks {
-        allocator_set_8k(a, b + page_8k, false)
-    }
-
-    for b in 0..<pages {
-        allocator_set_4k(a, b + page, false)
+    offset := allocation_level_page_count * (highest_page_start+highest_pages)
+    for level := actual_level; level >= 0; level -= 1 {
+        if utils.get_bit(low_pages, u8(level)) {
+            page_count := get_level_page_size(level)
+            set_page_block(a, offset / page_count, level, false)
+            offset += page_count
+        }
     }
 
     return
 }
 
-// Tests
-
 import "kernel:testing"
 
 when testing.TESTING {
-    run_tests :: proc() {
-        testing.run_test({ name = "test_free", system = "kronos_allocator_physical", p = test_free })
-        testing.run_test({ name = "test_allocate", system = "kronos_allocator_physical", p = test_allocate })
-        testing.run_test({ name = "test_calculate_pages", system = "kronos_allocator_physical", p = test_calculate_pages })
-        testing.run_test({ name = "test_calculate_size", system = "kronos_allocator_physical", p = test_calculate_size })
-        testing.run_test({ name = "test_physical_allocator2", system = "kronos_allocator_physical", p = test_physical_allocator2 })
-        testing.run_test({ name = "test_blocks", system = "kronos_allocator_physical", p = test_blocks })
-        testing.run_test({ name = "test_set_functions", system = "kronos_allocator_physical", p = test_set_functions })
-        testing.run_test({ name = "test_allocations", system = "kronos_allocator_physical", p = test_allocations })
-    }
+    test_free :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
 
-    test_blocks :: proc(t: ^testing.T) {
-        _32k_blocks, _16k_blocks, _8k_blocks, pages := allocator_calculate_required_blocks(runtime.Kilobyte * 4)
-        testing.expect_value(t, pages, 1)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 0)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 8)
-        testing.expect_value(t, pages, 0)
-        testing.expect_value(t, _8k_blocks, 1)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 0)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 16)
-        testing.expect_value(t, pages, 0)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 1)
-        testing.expect_value(t, _32k_blocks, 0)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 32)
-        testing.expect_value(t, pages, 0)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 1)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 64)
-        testing.expect_value(t, pages, 0)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 2)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * 36)
-        testing.expect_value(t, pages, 1)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 1)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks(runtime.Kilobyte * ((32 * 1) + (16 * 1) + (8 * 1) + (4 * 1)))
-        testing.expect_value(t, pages, 1)
-        testing.expect_value(t, _8k_blocks, 1)
-        testing.expect_value(t, _16k_blocks, 1)
-        testing.expect_value(t, _32k_blocks, 1)
-
-        _32k_blocks, _16k_blocks, _8k_blocks, pages = allocator_calculate_required_blocks((runtime.Kilobyte * ((32 * 1) + (16 * 1) + (8 * 1) + (4 * 1))) + 2323)
-        testing.expect_value(t, pages, 0)
-        testing.expect_value(t, _8k_blocks, 0)
-        testing.expect_value(t, _16k_blocks, 0)
-        testing.expect_value(t, _32k_blocks, 2)
-    }
-
-    test_set_functions :: proc(t: ^testing.T) {
-        a := Allocator(64){}
-
-        testing.expect(t, allocator_is_free(a, 0, PAGE_SIZE * 64))
-        allocator_set_32k(&a, 0, true)
-        testing.expect(t, !allocator_is_free(a, 0, runtime.Kilobyte * 32))
-        testing.expect(t, allocator_has_allocation(a, 0, runtime.Kilobyte * 32))
-    }
-
-    test_allocations :: proc(t: ^testing.T) {
-        a := Allocator(64){
-            base = 0x1000,
+        Free_Test_Case :: struct {
+            pages: int,
+            level: int,
         }
 
-        testing.expect(t, allocator_is_free(a, 0, PAGE_SIZE))
+        tests := [?]Free_Test_Case{
+            { 16, a.levels-1 },
+            { 8, a.levels-2 },
+            { 9, a.levels-2 },
+        }
 
-        page, err := allocator_alloc_pages(&a, PAGE_SIZE)
-        testing.expect_value(t, err, runtime.Allocator_Error.None)
-        testing.expect_value(t, page, 0)
-        testing.expect(t, allocator_has_allocation(a, page, PAGE_SIZE))
+        for test, i in tests {
+            page, err := alloc_uninitalized_pages(&a, test.pages)
+            testing.expect_value(t, page, 0)
+            testing.expect_value(t, err, runtime.Allocator_Error.None)
 
-        err = allocator_free_pages(&a, page, PAGE_SIZE)
-        testing.expect_value(t, err, runtime.Allocator_Error.None)
-        testing.expect(t, allocator_is_free(a, page, PAGE_SIZE))
+            failed := false
+            if !testing.expect_value(t, free_pages(&a, page, test.pages), runtime.Allocator_Error.None) {
+                failed = true
+            }
+            if !testing.expect(t, is_page_block_free(a, 0, test.level)) {
+                failed = true
+            }
+            if failed {
+                testing._new_line(t)
+                fmt.wprintfln(t.writer, "test_free: test %d failed\n%#v", i, test)
+                write_allocator_usage(t.writer, a)
+            }
+        }
+
+    }
+
+    test_allocate :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
+
+        Allocate_Test_Case :: struct {
+            reset: bool, // Reset the allocator
+            pages: int,
+            page:  int,
+            err:   runtime.Allocator_Error,
+        }
+
+        tests := [?]Allocate_Test_Case{
+            { pages = 4, page = 0, err = .None },
+            { pages = 4, page = 4, err = .None },
+            { pages = 8, page = 8, err = .None },
+            { pages = 9, page = 16, err = .None },
+            { pages = 8, page = -1, err = .Out_Of_Memory },
+            { pages = 4, page = 28, err = .None },
+            { pages = 2, page = 26, err = .None },
+            { pages = 1, page = 25, err = .None },
+
+            { reset = true, pages = 16, page = 0, err = .None },
+            { pages = 16, page = 16, err = .None },
+        }
+
+        for test, i in tests {
+            if test.reset {
+                mem.zero(raw_data(buf[:]), len(buf))
+            }
+            page, err := alloc_uninitalized_pages(&a, test.pages)
+            failed := false
+            if !testing.expect_value(t, page, test.page) {
+                failed = true
+            }
+            if !testing.expect_value(t, err, test.err) {
+                failed = true
+            }
+            if failed {
+                testing._new_line(t)
+                fmt.wprintfln(t.writer, "test_allocate: test %d failed\n%#v", i, test)
+                write_allocator_usage(t.writer, a)
+            }
+        }
+    }
+
+    test_calculate_pages :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
+
+        Pages_Test_Case :: struct {
+            pages:         int,
+            highest_pages: int,
+            low_pages:     u8,
+        }
+
+        tests := [?]Pages_Test_Case{
+            { pages = 1, highest_pages = 0, low_pages = 0b0001 },
+            { pages = 4, highest_pages = 0, low_pages = 0b0100 },
+            { pages = 6, highest_pages = 0, low_pages = 0b0110 },
+            { pages = 7, highest_pages = 0, low_pages = 0b0111 },
+            { pages = 15, highest_pages = 0, low_pages = 0b1111 },
+            { pages = 16, highest_pages = 1, low_pages = 0b0000 },
+            { pages = 17, highest_pages = 1, low_pages = 0b0001 },
+            { pages = 31, highest_pages = 1, low_pages = 0b1111 },
+        }
+
+        for test in tests {
+            highest_pages, low_pages := calculate_pages(a, test.pages)
+            testing.expect_value(t, highest_pages, test.highest_pages)
+            testing.expect_value(t, low_pages, test.low_pages)
+        }
+    }
+
+    test_calculate_size :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
+
+        Size_Test_Case :: struct {
+            size:          int,
+            highest_pages: int,
+            low_pages:     u8,
+        }
+
+        tests := [?]Size_Test_Case{
+            { size = 4, highest_pages = 0, low_pages = 0b0001 },
+            { size = PAGE_SIZE * 2, highest_pages = 0, low_pages = 0b0010 },
+            { size = PAGE_SIZE * 18 + 1, highest_pages = 1, low_pages = 0b0011 },
+            { size = PAGE_SIZE * 63 + 1, highest_pages = 4, low_pages = 0b0000 },
+            { size = PAGE_SIZE * 64, highest_pages = 4, low_pages = 0b0000 },
+            { size = PAGE_SIZE * 64 + 1, highest_pages = 4, low_pages = 0b0001 },
+        }
+
+        for test in tests {
+            highest_pages, low_pages := calculate_size(a, test.size)
+            testing.expect_value(t, highest_pages, test.highest_pages)
+            testing.expect_value(t, low_pages, test.low_pages)
+        }
     }
 }
