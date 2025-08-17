@@ -171,7 +171,7 @@ calculate_size :: proc(a: Physical_Allocator, size: int) -> (highest_pages: int,
 alloc_zeroed_pages :: proc(a: ^Physical_Allocator, pages: int) -> (page: int, err: runtime.Allocator_Error) {
     page = -1
     page = alloc_uninitalized_pages(a, pages) or_return
-    mem.zero(rawptr(a.base + (page * PAGE_SIZE)), pages * PAGE_SIZE)
+    mem.zero(rawptr(a.base + uintptr(page * PAGE_SIZE)), pages * PAGE_SIZE)
     return
 }
 
@@ -275,6 +275,13 @@ free_pages :: proc(a: ^Physical_Allocator, page: int, pages: int) -> (err: runti
 import "kernel:testing"
 
 when testing.TESTING {
+    run_tests :: proc() {
+        testing.run_test({ name = "test_free", system = "kronos_allocator_physical", p = test_free })
+        testing.run_test({ name = "test_allocate", system = "kronos_allocator_physical", p = test_allocate })
+        testing.run_test({ name = "test_calculate_pages", system = "kronos_allocator_physical", p = test_calculate_pages })
+        testing.run_test({ name = "test_calculate_size", system = "kronos_allocator_physical", p = test_calculate_size })
+    }
+
     test_free :: proc(t: ^testing.T) {
         buf: [8]u8
         a: Physical_Allocator

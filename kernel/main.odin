@@ -2,9 +2,10 @@ package kronos_kernel
 
 import "base:runtime"
 
-import "kernel:limine"
 import "kernel:cpu"
 import "kernel:idt"
+import "kernel:gdt"
+import "kernel:limine"
 import "kernel:serial"
 import "kernel:testing"
 import serial_writer "kernel:serial/writer"
@@ -36,17 +37,6 @@ quit :: proc() {
 //     runtime.print_byte('\n')
 //     halt_catch_fire()
 // }
-
-gdt := [5]u64{}
-
-gdt_init :: proc() {
-    cpu.encode_gdt_entry(&gdt[0], {})
-    cpu.encode_gdt_entry(&gdt[1], { limit = 0xFFFFF, access_byte = 0x9A, flags = 0xA })
-    cpu.encode_gdt_entry(&gdt[2], { limit = 0xFFFFF, access_byte = 0x92, flags = 0xC })
-    cpu.encode_gdt_entry(&gdt[3], { limit = 0xFFFFF, access_byte = 0xFA, flags = 0xA })
-    cpu.encode_gdt_entry(&gdt[4], { limit = 0xFFFFF, access_byte = 0xF2, flags = 0xC })
-    cpu.set_gdt(len(gdt)*size_of(gdt[0]) - 1, uintptr(&gdt))
-}
 
 print_memmap :: proc(w: io.Writer) {
     response := limine.memmap_request.response
@@ -90,7 +80,7 @@ kmain :: proc "sysv" () {
 
     writer := serial_writer.writer()
 
-    gdt_init()
+    gdt.init()
     idt.init()
     print_memmap(writer)
 
