@@ -168,6 +168,13 @@ calculate_size :: proc(a: Physical_Allocator, size: int) -> (highest_pages: int,
     return calculate_pages(a, pages)
 }
 
+alloc_zeroed_pages :: proc(a: ^Physical_Allocator, pages: int) -> (page: int, err: runtime.Allocator_Error) {
+    page = -1
+    page = alloc_uninitalized_pages(a, pages) or_return
+    mem.zero(rawptr(a.base + (page * PAGE_SIZE)), pages * PAGE_SIZE)
+    return
+}
+
 alloc_uninitalized_pages :: proc(a: ^Physical_Allocator, pages: int) -> (int, runtime.Allocator_Error) {
     highest_pages, low_pages := calculate_pages(a^, pages)
 
