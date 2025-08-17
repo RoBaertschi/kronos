@@ -2,3 +2,6 @@
 	path = limine
 	url = https://github.com/limine-bootloader/limine.git
     branch = v9.x-binary
+[submodule "odin"]
+	path = odin
+	url = https://github.com/robaertschi/odin
