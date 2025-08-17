@@ -93,6 +93,9 @@ write_allocator_usage :: proc(w: io.Writer, a: Physical_Allocator) {
     for i in root_level_start..<root_level_end {
         write_bit(w, get_bit_in_bytes(a.data, i))
     }
+
+    fmt.wprintf(w, "% 4dKiB % 3d Pages", (root_level_end-root_level_start) * 4, (root_level_end-root_level_start))
+
     io.write_rune(w, '\n')
     io.write_rune(w, '\n')
 
@@ -276,10 +279,18 @@ import "kernel:testing"
 
 when testing.TESTING {
     run_tests :: proc() {
+        testing.run_test({ name = "test_write_allocator", system = "kronos_allocator_physical", p = test_write_allocator })
         testing.run_test({ name = "test_free", system = "kronos_allocator_physical", p = test_free })
         testing.run_test({ name = "test_allocate", system = "kronos_allocator_physical", p = test_allocate })
         testing.run_test({ name = "test_calculate_pages", system = "kronos_allocator_physical", p = test_calculate_pages })
         testing.run_test({ name = "test_calculate_size", system = "kronos_allocator_physical", p = test_calculate_size })
+    }
+
+    test_write_allocator :: proc(t: ^testing.T) {
+        buf: [8]u8
+        a: Physical_Allocator
+        init_physical_allocator(&a, buf[:], 0)
+        write_allocator_usage(t.writer, a)
     }
 
     test_free :: proc(t: ^testing.T) {
