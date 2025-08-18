@@ -5,15 +5,23 @@ global halt_catch_fire
 global enable_sse
 global set_gdt
 global set_idt
+global get_cr3
+global set_cr3
+global magic_breakpoint
 
 
 section .text
 
 halt_catch_fire:
+    call magic_breakpoint
     cli
 .loop:
     hlt
     jmp .loop
+
+magic_breakpoint:
+    xchg bx, bx
+    ret
 
 enable_sse:
     mov rax, cr0

@@ -33,8 +33,26 @@ Interrupt_Context :: struct {
     iret_ss: u64,
 }
 
+Page_Fault_Error_Code :: bit_field u64 {
+    present: bool | 1,
+    write:   bool | 1,
+    user:    bool | 1,
+
+    _: u8 | 1,
+
+    protection_key: bool | 1,
+    shadow_stack:   bool | 1,
+    sgx:            bool | 1,
+}
+
+print_bool :: proc "contextless" (value: bool) {
+    runtime.print_string("true" if value else "false")
+}
+
 @(export)
 exception_handler :: proc "sysv" (ctx: ^Interrupt_Context) -> ^Interrupt_Context {
+    runtime.print_u64(ctx.vector_number)
+    runtime.print_string(":")
     runtime.print_string(interrupt_get_mnemonic(u8(ctx.vector_number)))
     runtime.print_string(" - ")
     runtime.print_string(interrupt_name(u8(ctx.vector_number)))
@@ -42,6 +60,21 @@ exception_handler :: proc "sysv" (ctx: ^Interrupt_Context) -> ^Interrupt_Context
     if interrupt_has_error_code(u8(ctx.vector_number)) {
         runtime.print_string(": ")
         runtime.print_u64(ctx.error_code)
+        if Interrupt(ctx.vector_number) == .Page_Fault {
+            pfec := Page_Fault_Error_Code(ctx.error_code)
+            runtime.print_string("\nPresent: ")
+            print_bool(pfec.present)
+            runtime.print_string("\nWrite: ")
+            print_bool(pfec.write)
+            runtime.print_string("\nUser: ")
+            print_bool(pfec.user)
+            runtime.print_string("\nProtection Key: ")
+            print_bool(pfec.protection_key)
+            runtime.print_string("\nShadow Stack: ")
+            print_bool(pfec.shadow_stack)
+            runtime.print_string("\nSGX: ")
+            print_bool(pfec.sgx)
+        }
     }
     runtime.print_string("\n")
     cpu.halt_catch_fire()

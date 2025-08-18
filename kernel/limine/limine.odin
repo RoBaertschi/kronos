@@ -93,6 +93,33 @@ Paging_Mode_Response :: struct {
     mode:     Paging_Mode,
 }
 
+EXECUTABLE_ADDRESS_REQUEST :: [4]u64{ COMMON_MAGIC1, COMMON_MAGIC2, 0x71ba76863cc55f63, 0xb2644a48c516a487 }
+
+Executable_Address_Request :: struct {
+    id:       [4]u64,
+    revision: u64,
+    response: ^Executable_Address_Response,
+}
+
+Executable_Address_Response :: struct {
+    revision:      u64,
+    physical_base: uintptr,
+    virtual_base:  uintptr,
+}
+
+HHDM_REQUEST :: [4]u64{ COMMON_MAGIC1, COMMON_MAGIC2, 0x48dcf1cb8ad2b852, 0x63984e959a98244b }
+
+Hhdm_Request :: struct {
+    id:       [4]u64,
+    revision: u64,
+    response: ^Hhdm_Response,
+}
+
+Hhdm_Response :: struct {
+    revision: u64,
+    offset:   uintptr,
+}
+
 @(export, link_section=".limine_requests_start")
 requests_start_marker := [4]u64{0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9}
 
@@ -125,4 +152,15 @@ paging_request := Paging_Mode_Request{
     mode     = ._4_Lvl,
     min_mode = ._4_Lvl,
     max_mode = ._4_Lvl,
+}
+
+@(export, link_section=".limine_requests")
+executable_address_request := Executable_Address_Request{
+    id       = EXECUTABLE_ADDRESS_REQUEST,
+    revision = 0,
+}
+
+hhdm_request := Hhdm_Request{
+    id       = HHDM_REQUEST,
+    revision = 0,
 }

@@ -9,10 +9,11 @@ import "core:mem"
 import "core:math"
 
 import "kernel:utils"
+import "kernel:paging"
 import sw "kernel:serial/writer"
 _ :: sw
 
-PAGE_SIZE :: 4 * runtime.Kilobyte
+PAGE_SIZE :: paging.PAGE_SIZE
 
 Physical_Allocator :: struct {
     base:   uintptr,
@@ -21,6 +22,10 @@ Physical_Allocator :: struct {
 }
 
 MAX_LEVEL :: 7 // 512 KiB blocks
+
+get_required_backing_size_for_pages :: proc(page_amount: int) -> int {
+    return (page_amount / 8 + page_amount % 8 != 0 ? 1 : 0) * 2
+}
 
 init_physical_allocator :: proc(a: ^Physical_Allocator, data: []byte, base: uintptr) {
     level := 1

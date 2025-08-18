@@ -49,6 +49,7 @@ run odin build kernel -out:bin/kernel   \
 run nasm kernel/cpu/cpu.asm -o bin/kronos-cpu.asm.o -f elf64
 run nasm kernel/serial/serial.asm -o bin/kronos-serial.asm.o -f elf64
 run nasm kernel/idt/idt.asm -o bin/kronos-idt.asm.o -f elf64
+run nasm kernel/paging/paging.asm -o bin/kronos-paging.asm.o -f elf64
 
 run ld bin/*.o -o bin/kronos.elf \
     -m elf_x86_64            \

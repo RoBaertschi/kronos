@@ -3,12 +3,13 @@ package kronos_cpu
 @require foreign import cpu "cpu.asm"
 
 foreign cpu {
-    halt_catch_fire :: proc "sysv"() -> ! ---
-    enable_sse :: proc "sysv"() ---
-    set_gdt :: proc "sysv"(limit: u16, base: uintptr) ---
-    set_idt :: proc "sysv"(limit: u16, base: uintptr) ---
-    get_cr3 :: proc "sysv"() -> u64 ---
-    set_cr3 :: proc "sysv"(val: u64) ---
+    halt_catch_fire :: proc "sysv" () -> ! ---
+    enable_sse :: proc "sysv" () ---
+    set_gdt :: proc "sysv" (limit: u16, base: uintptr) ---
+    set_idt :: proc "sysv" (limit: u16, base: uintptr) ---
+    get_cr3 :: proc "sysv" () -> u64 ---
+    set_cr3 :: proc "sysv" (val: u64) ---
+    magic_breakpoint :: proc "sysv" () ---
 }
 
 // Segment_Descriptor_Access_Byte :: bit_field u8 {

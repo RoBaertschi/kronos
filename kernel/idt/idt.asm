@@ -46,19 +46,18 @@ interrupt_stub:
 %macro isr_err_stub 1
 ALIGN 16
 isr_stub_%+%1:
-    push 0
-    push %1
-    call interrupt_stub
-    iretq
+    sub rsp, 16
+    mov qword [rsp], %1
+    jmp interrupt_stub
 %endmacro
 
 %macro isr_no_err_stub 1
 ALIGN 16
 isr_stub_%+%1:
-    push 0
-    push %1
-    call interrupt_stub
-    iretq
+    sub rsp, 16
+    mov qword [rsp], 0
+    mov qword [rsp+8], %1
+    jmp interrupt_stub
 %endmacro
 
 %define IDT_SIZE 256

@@ -7,13 +7,15 @@ import "kernel:idt"
 import "kernel:gdt"
 import "kernel:limine"
 import "kernel:serial"
+import "kernel:paging"
 import "kernel:testing"
 import serial_writer "kernel:serial/writer"
-import ap "kernel:allocator/physical"
-_ :: ap
+import pa "kernel:allocator/physical"
+_ :: pa
 
-import "core:fmt"
 import "core:io"
+import "core:mem"
+import "core:fmt"
 
 quit :: proc() {
     #force_no_inline runtime._cleanup_runtime()
@@ -37,6 +39,25 @@ quit :: proc() {
 //     runtime.print_byte('\n')
 //     halt_catch_fire()
 // }
+
+// finds the smallest memmap entry for initial use
+find_first_ideal_memmap_entry :: proc() -> ^limine.Memmap_Entry {
+    memmap := limine.memmap_request.response
+    if memmap == nil {
+        return nil
+    } else {
+        memmap_entries := memmap.entries[:memmap.entry_count]
+        smallest_entry : ^limine.Memmap_Entry = nil
+        for entry in memmap_entries {
+            if entry.type == .Usable {
+                if smallest_entry == nil || smallest_entry.length > entry.length {
+                    smallest_entry = entry
+                }
+            }
+        }
+        return smallest_entry
+    }
+}
 
 print_memmap :: proc(w: io.Writer) {
     response := limine.memmap_request.response
@@ -82,16 +103,27 @@ kmain :: proc "sysv" () {
 
     gdt.init()
     idt.init()
+    paging.init_minimal()
+
     print_memmap(writer)
+    memmap_entry := find_first_ideal_memmap_entry()
+    bootstrap_pages := paging.bootstrap_pages(memmap_entry.base, int(memmap_entry.length / paging.PAGE_SIZE))
+
+    pa_buffer_size := pa.get_required_backing_size_for_pages(int(memmap_entry.length))
+    assert(pa_buffer_size < int(memmap_entry.length))
+    pa_buffer := (cast([^]u8)bootstrap_pages)[:pa_buffer_size]
+    mem.zero(raw_data(pa_buffer), len(pa_buffer))
+    physical_allocator: pa.Physical_Allocator
+    pa.init_physical_allocator(&physical_allocator, pa_buffer, bootstrap_pages)
+
+    if !limine.BASE_REVISION_SUPPORTED() {
+        quit()
+    }
 
     when testing.TESTING {
-        ap.run_tests()
+        pa.run_tests()
         quit()
     } else {
-        if !limine.BASE_REVISION_SUPPORTED() {
-            quit()
-        }
-
         if limine.framebuffer_request.response == nil || limine.framebuffer_request.response.framebuffer_count < 1 {
             quit()
         }
