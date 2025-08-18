@@ -1,7 +1,11 @@
 package kronos_idt
 
 import "base:runtime"
+
+import "core:fmt"
+
 import "kernel:cpu"
+import sw "kernel:serial/writer"
 
 IDT_SIZE :: 256 // sync with idt.asm
 
@@ -26,11 +30,12 @@ Interrupt_Context :: struct {
     vector_number: u64,
     error_code: u64,
 
-    iret_rip: u64,
-    iret_cs: u64,
-    iret_flags: u64,
-    iret_rsp: u64,
-    iret_ss: u64,
+    // Due to stack alignment issues, we just ignore these for now
+    // iret_rip: u64,
+    // iret_cs: u64,
+    // iret_flags: u64,
+    // iret_rsp: u64,
+    // iret_ss: u64,
 }
 
 Page_Fault_Error_Code :: bit_field u64 {
@@ -38,10 +43,12 @@ Page_Fault_Error_Code :: bit_field u64 {
     write:   bool | 1,
     user:    bool | 1,
 
-    _: u8 | 1,
-
+    reserved_write: bool | 1,
     protection_key: bool | 1,
     shadow_stack:   bool | 1,
+
+    _: u16 | 9,
+
     sgx:            bool | 1,
 }
 
@@ -51,11 +58,11 @@ print_bool :: proc "contextless" (value: bool) {
 
 @(export)
 exception_handler :: proc "sysv" (ctx: ^Interrupt_Context) -> ^Interrupt_Context {
-    runtime.print_u64(ctx.vector_number)
-    runtime.print_string(":")
-    runtime.print_string(interrupt_get_mnemonic(u8(ctx.vector_number)))
-    runtime.print_string(" - ")
-    runtime.print_string(interrupt_name(u8(ctx.vector_number)))
+    cpu.magic_breakpoint()
+
+    context = runtime.default_context()
+    w := sw.writer()
+    fmt.wprintf(w, "%d:%s - %s", ctx.vector_number, interrupt_get_mnemonic(u8(ctx.vector_number)), interrupt_name(u8(ctx.vector_number)))
 
     if interrupt_has_error_code(u8(ctx.vector_number)) {
         runtime.print_string(": ")
@@ -68,15 +75,22 @@ exception_handler :: proc "sysv" (ctx: ^Interrupt_Context) -> ^Interrupt_Context
             print_bool(pfec.write)
             runtime.print_string("\nUser: ")
             print_bool(pfec.user)
+            runtime.print_string("\nReserved write: ")
+            print_bool(pfec.reserved_write)
             runtime.print_string("\nProtection Key: ")
             print_bool(pfec.protection_key)
             runtime.print_string("\nShadow Stack: ")
             print_bool(pfec.shadow_stack)
             runtime.print_string("\nSGX: ")
             print_bool(pfec.sgx)
+
+            fmt.wprintf(w, "\nAt: %p", rawptr(uintptr(cpu.get_cr2())))
         }
     }
     runtime.print_string("\n")
+
+    fmt.wprintfln(w, "%#v", ctx)
+
     cpu.halt_catch_fire()
 }
 

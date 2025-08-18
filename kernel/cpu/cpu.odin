@@ -9,6 +9,7 @@ foreign cpu {
     set_idt :: proc "sysv" (limit: u16, base: uintptr) ---
     get_cr3 :: proc "sysv" () -> u64 ---
     set_cr3 :: proc "sysv" (val: u64) ---
+    get_cr2 :: proc "sysv" () -> u64 ---
     magic_breakpoint :: proc "sysv" () ---
 }
 

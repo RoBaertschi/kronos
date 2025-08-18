@@ -107,9 +107,9 @@ kmain :: proc "sysv" () {
 
     print_memmap(writer)
     memmap_entry := find_first_ideal_memmap_entry()
-    bootstrap_pages := paging.bootstrap_pages(memmap_entry.base, int(memmap_entry.length / paging.PAGE_SIZE))
+    bootstrap_pages := paging.bootstrap_pages(memmap_entry.base, int(memmap_entry.length) / paging.PAGE_SIZE)
 
-    pa_buffer_size := pa.get_required_backing_size_for_pages(int(memmap_entry.length))
+    pa_buffer_size := pa.get_required_backing_size_for_pages(int(memmap_entry.length) / paging.PAGE_SIZE)
     assert(pa_buffer_size < int(memmap_entry.length))
     pa_buffer := (cast([^]u8)bootstrap_pages)[:pa_buffer_size]
     mem.zero(raw_data(pa_buffer), len(pa_buffer))

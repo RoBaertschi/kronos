@@ -2,7 +2,9 @@ package kronos_paging
 
 import "base:runtime"
 
-import "kernel:serial"
+import "core:fmt"
+
+import sw "kernel:serial/writer"
 import "kernel:cpu"
 import "kernel:limine"
 
@@ -29,22 +31,40 @@ Canonical_Address :: bit_field uintptr {
 
 init_minimal :: proc() {
     if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
-        return
+        panic("Missing required limine responses")
     }
-
-    offset := limine.hhdm_request.response.offset
 
     physical_base := limine.executable_address_request.response.physical_base
     virtual_base := limine.executable_address_request.response.virtual_base
 
     canonical_virtual_base := Canonical_Address(virtual_base)
+
+    for i in 0..<512 {
+        page_map_level_4_entries[i] = {
+            present = false,
+        }
+    }
+
     page_map_level_4_entries[canonical_virtual_base.page_map_level_4_offset] = {
         address = uintptr(&page_directory_pointer_entries[0]) >> 12,
         present = true,
     }
+
+    for i in 0..<512 {
+        page_directory_pointer_entries[i] = {
+            present = false,
+        }
+    }
+
     page_directory_pointer_entries[canonical_virtual_base.page_directory_pointer_offset] = {
         address = uintptr(&page_directory_entries[0]) >> 12,
         present = true,
+    }
+
+    for i in 0..<512 {
+        page_directory_entries[i] = {
+            present = false,
+        }
     }
 
     page_directory_entries[canonical_virtual_base.page_directory_offset] = {
@@ -60,11 +80,24 @@ init_minimal :: proc() {
         }
     }
 
+    reload_cr3()
+
+    w := sw.writer()
+    fmt.wprintln(w, "Initalized paging from %p to %p", rawptr(virtual_base), rawptr(physical_base))
+}
+
+reload_cr3 :: proc() {
+    if limine.hhdm_request.response == nil {
+        panic("Missing hhdm response from limine")
+    }
+
+    offset := limine.hhdm_request.response.offset
+    fmt.wprintfln(sw.writer(), "PML4 %p : offset=%X,orignal=%p", rawptr(uintptr(&page_map_level_4_entries[0]) - offset), offset, &page_map_level_4_entries[0])
     cpu.set_cr3(u64(uintptr(&page_map_level_4_entries[0]) - offset) & 0x000FFFFFF000)
-    serial.write_string("Initalized paging!")
 }
 
 bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
+    assert(physical_address % 4096 == 0)
     virtual_base := limine.executable_address_request.response.virtual_base + (512 * PAGE_SIZE)
     canonical_virtual_base := Canonical_Address(virtual_base)
 
@@ -74,6 +107,7 @@ bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
         address = uintptr(&bootstrap_page_table_entries[0]) >> 12,
         present = true,
     }
+
     for i in 0..<pages {
         bootstrap_page_table_entries[i] = {
             address =    (physical_address >> 12) + uintptr(i),
@@ -82,10 +116,15 @@ bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
         }
     }
 
-    runtime.print_string("Reserved ")
-    runtime.print_int(pages)
-    runtime.print_string(" pages for bootstraping at ")
-    runtime.print_uintptr(physical_address)
-    runtime.print_string("\n")
+    for i in pages..<512 {
+        bootstrap_page_table_entries[i] = {
+            present = false,
+        }
+    }
+
+    reload_cr3()
+    w := sw.writer()
+
+    fmt.wprintfln(w, "Reserved %d pages for bootstraping from %p to %p", pages, rawptr(virtual_base), rawptr(physical_address))
     return virtual_base
 }

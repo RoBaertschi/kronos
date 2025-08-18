@@ -160,6 +160,7 @@ executable_address_request := Executable_Address_Request{
     revision = 0,
 }
 
+@(export, link_section=".limine_requests")
 hhdm_request := Hhdm_Request{
     id       = HHDM_REQUEST,
     revision = 0,

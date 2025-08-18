@@ -5,6 +5,7 @@ global halt_catch_fire
 global enable_sse
 global set_gdt
 global set_idt
+global get_cr2
 global get_cr3
 global set_cr3
 global magic_breakpoint
@@ -31,6 +32,10 @@ enable_sse:
     mov rax, cr4
     or ax, 3 << 9
     mov cr4, rax
+    ret
+
+get_cr2:
+    mov rax, cr2
     ret
 
 get_cr3:

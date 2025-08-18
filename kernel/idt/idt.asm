@@ -4,8 +4,9 @@ bits 64
 section .text
 
 extern exception_handler
-interrupt_stub:
-    push rax
+
+; IMPORTANT: this is missing the push rax
+%macro begin_interrupt_stub 0
     push rbx
     push rcx
     push rdi
@@ -19,11 +20,9 @@ interrupt_stub:
     push r13
     push r14
     push r15
+%endmacro
 
-    mov rdi, rsp
-    call exception_handler
-    mov rsp, rax
-
+%macro end_interrupt_stub 0
     pop r15
     pop r14
     pop r13
@@ -37,18 +36,31 @@ interrupt_stub:
     pop rdi
     pop rcx
     pop rbx
-    pop rax
-
-    ; Remove vector and error code
-    add rsp, 16
-    iretq
+%endmacro
 
 %macro isr_err_stub 1
 ALIGN 16
 isr_stub_%+%1:
     sub rsp, 16
     mov qword [rsp], %1
-    jmp interrupt_stub
+
+    push rax
+
+    mov rax, [rsp+24]
+    mov qword [rsp+16], rax
+
+    begin_interrupt_stub
+
+    mov rdi, rsp
+    call exception_handler
+    mov rsp, rax
+
+    end_interrupt_stub
+    mov rax, [rsp+8]
+
+    ; Remove vector and error code
+    add rsp, 16
+    iretq
 %endmacro
 
 %macro isr_no_err_stub 1
@@ -57,7 +69,20 @@ isr_stub_%+%1:
     sub rsp, 16
     mov qword [rsp], 0
     mov qword [rsp+8], %1
-    jmp interrupt_stub
+
+    push rax
+    begin_interrupt_stub
+
+    mov rdi, rsp
+    call exception_handler
+    mov rsp, rax
+
+    end_interrupt_stub
+    pop rax
+
+    ; Remove vector and error code
+    add rsp, 16
+    iretq
 %endmacro
 
 %define IDT_SIZE 256
