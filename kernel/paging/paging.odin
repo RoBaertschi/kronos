@@ -29,6 +29,19 @@ Canonical_Address :: bit_field uintptr {
     sign_extend:                   u16 | 16,
 }
 
+Cr3 :: bit_field u64 {
+    _: u8 | 3,
+
+    pwt: bool | 1,
+    pcd: bool | 1,
+
+    _: u8 | 7,
+
+    base: uintptr | 40,
+
+    _: u16 | 12,
+}
+
 init_minimal :: proc() {
     if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
         panic("Missing required limine responses")
@@ -45,8 +58,10 @@ init_minimal :: proc() {
         }
     }
 
+    offset := limine.hhdm_request.response.offset
+
     page_map_level_4_entries[canonical_virtual_base.page_map_level_4_offset] = {
-        address = uintptr(&page_directory_pointer_entries[0]) >> 12,
+        address = (uintptr(&page_directory_pointer_entries[0]) - offset) >> 12,
         present = true,
     }
 
@@ -57,7 +72,7 @@ init_minimal :: proc() {
     }
 
     page_directory_pointer_entries[canonical_virtual_base.page_directory_pointer_offset] = {
-        address = uintptr(&page_directory_entries[0]) >> 12,
+        address = (uintptr(&page_directory_entries[0]) - offset) >> 12,
         present = true,
     }
 
@@ -68,7 +83,7 @@ init_minimal :: proc() {
     }
 
     page_directory_entries[canonical_virtual_base.page_directory_offset] = {
-        address = uintptr(&page_table_entries[0]) >> 12,
+        address = (uintptr(&page_table_entries[0]) - offset) >> 12,
         present = true,
     }
 
@@ -92,8 +107,11 @@ reload_cr3 :: proc() {
     }
 
     offset := limine.hhdm_request.response.offset
-    fmt.wprintfln(sw.writer(), "PML4 %p : offset=%X,orignal=%p", rawptr(uintptr(&page_map_level_4_entries[0]) - offset), offset, &page_map_level_4_entries[0])
-    cpu.set_cr3(u64(uintptr(&page_map_level_4_entries[0]) - offset) & 0x000FFFFFF000)
+    fmt.wprintfln(sw.writer(), "PML4 %p without useless bits=%p : offset=%X,orignal=%p", rawptr(uintptr(&page_map_level_4_entries[0]) - offset),  rawptr((uintptr(&page_map_level_4_entries[0]) - offset) & 0xFFFFFFFFFFFF000), offset, &page_map_level_4_entries[0])
+    cr3 := Cr3(cpu.get_cr3())
+    cr3.base = (uintptr(&page_map_level_4_entries[0]) - offset) >> 12
+    cpu.magic_breakpoint()
+    cpu.set_cr3(u64(cr3))
 }
 
 bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
