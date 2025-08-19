@@ -1,3 +1,4 @@
+#!/bin/bash
 set -e
 
 if [[ -n "$1" ]]; then
@@ -29,7 +30,7 @@ run export ODIN_ROOT="$(pwd)/kernel/odin-rt"
 step "==> Building Kernel"
 
 # TODO(robin): Switch to another build mode for automatic assembly compilation
-run odin build kernel -out:bin/kernel   \
+run odinl build kernel -out:bin/kernel   \
     -debug                          \
     -collection:kernel=kernel       \
     -build-mode:obj                 \

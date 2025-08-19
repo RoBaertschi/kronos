@@ -100,16 +100,21 @@ kmain :: proc "sysv" (rsp: uintptr) {
 
     gdt.init()
     idt.init()
+    fmt.wprintln(writer, "About to initialize paging...")
     paging.init_minimal()
+    fmt.wprintln(writer, "Paging initialized, printing memmap...")
 
     print_memmap(writer)
+    fmt.wprintln(writer, "Memmap printed successfully")
     memmap_entry := find_first_ideal_memmap_entry()
     bootstrap_pages := paging.bootstrap_pages(memmap_entry.base, int(memmap_entry.length) / paging.PAGE_SIZE)
 
     pa_buffer_size := pa.get_required_backing_size_for_pages(int(memmap_entry.length) / paging.PAGE_SIZE)
     assert(pa_buffer_size < int(memmap_entry.length))
     pa_buffer := (cast([^]u8)bootstrap_pages)[:pa_buffer_size]
+    fmt.wprintfln(writer, "About to zero memory at %p, size %d", raw_data(pa_buffer), len(pa_buffer))
     mem.zero(raw_data(pa_buffer), len(pa_buffer))
+    fmt.wprintln(writer, "Memory zeroed successfully")
     physical_allocator: pa.Physical_Allocator
     pa.init_physical_allocator(&physical_allocator, pa_buffer, bootstrap_pages)
 
@@ -118,7 +123,9 @@ kmain :: proc "sysv" (rsp: uintptr) {
     }
 
     when testing.TESTING {
+        fmt.wprintln(writer, "About to run tests...")
         pa.run_tests()
+        fmt.wprintln(writer, "Tests completed, quitting...")
         quit()
     } else {
         if limine.framebuffer_request.response == nil || limine.framebuffer_request.response.framebuffer_count < 1 {

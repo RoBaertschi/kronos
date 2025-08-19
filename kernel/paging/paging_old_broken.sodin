@@ -1,0 +1,203 @@
+// THIS IS THE OLD BROKEN VERSION - FOR REFERENCE ONLY
+// This version caused triple faults due to fundamental paging errors
+// See comments below for detailed analysis of what was wrong
+
+package kronos_paging
+
+import "base:runtime"
+
+import "core:fmt"
+
+import sw "kernel:serial/writer"
+import "kernel:cpu"
+import "kernel:limine"
+
+PAGE_SIZE :: 4 * runtime.Kilobyte
+
+@require foreign import paging "paging.asm"
+
+foreign paging {
+    page_map_level_4_entries: [512]cpu.Page_Map_Level_4_Entry
+    page_directory_pointer_entries: [512]cpu.Page_Directory_Pointer_Entry
+    page_directory_entries: [512]cpu.Page_Directory_Entry
+    page_table_entries: [512]cpu.Page_Table_Entry
+    bootstrap_page_table_entries: [512]cpu.Page_Table_Entry
+}
+
+Canonical_Address :: bit_field uintptr {
+    physical_page_offset:          u16 | 12,
+    page_table_offset:             u16 | 9,
+    page_directory_offset:         u16 | 9,
+    page_directory_pointer_offset: u16 | 9,
+    page_map_level_4_offset:       u16 | 9,
+    sign_extend:                   u16 | 16,
+}
+
+Cr3 :: bit_field u64 {
+    _: u8 | 3,
+
+    pwt: bool | 1,
+    pcd: bool | 1,
+
+    _: u8 | 7,
+
+    base: uintptr | 40,
+
+    _: u16 | 12,
+}
+
+init_minimal :: proc() {
+    if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
+        panic("Missing required limine responses")
+    }
+
+    physical_base := limine.executable_address_request.response.physical_base
+    virtual_base := limine.executable_address_request.response.virtual_base
+
+    canonical_virtual_base := Canonical_Address(virtual_base)
+    fmt.wprintfln(sw.writer(), "pb=%p vb=%p o=%p", rawptr(physical_base), rawptr(virtual_base), rawptr(limine.hhdm_request.response.offset))
+
+    // PROBLEM 1: Only clearing and setting up KERNEL mapping
+    // This leaves HHDM space completely unmapped in our page tables!
+    for i in 0..<512 {
+        page_map_level_4_entries[i] = {
+            present = false,
+        }
+    }
+
+    // PROBLEM 2: Only mapping kernel space - no HHDM mapping!
+    // When bootstrap_pages() returns HHDM addresses, they become inaccessible
+    page_map_level_4_entries[canonical_virtual_base.page_map_level_4_offset] = {
+        address = (uintptr(&page_directory_pointer_entries[0]) - virtual_base + physical_base) >> 12,
+        present = true,
+        // MISSING: read_write = true (caused access violations)
+    }
+
+    for i in 0..<512 {
+        page_directory_pointer_entries[i] = {
+            present = false,
+        }
+    }
+
+    page_directory_pointer_entries[canonical_virtual_base.page_directory_pointer_offset] = {
+        address = (uintptr(&page_directory_entries[0]) - virtual_base + physical_base) >> 12,
+        present = true,
+        // MISSING: read_write = true (caused access violations)
+    }
+
+    for i in 0..<512 {
+        page_directory_entries[i] = {
+            present = false,
+        }
+    }
+
+    page_directory_entries[canonical_virtual_base.page_directory_offset] = {
+        address = (uintptr(&page_table_entries[0]) - virtual_base + physical_base) >> 12,
+        present = true,
+        // MISSING: read_write = true (caused access violations)
+    }
+
+    // This part was actually correct - mapping kernel pages
+    for &entry, i in page_table_entries {
+        entry = {
+            address =    (physical_base >> 12) + uintptr(i),
+            present =    true,
+            read_write = true,
+        }
+    }
+
+    // PROBLEM 3: Called reload_cr3() with incomplete mapping!
+    // At this point, our page tables only map ~2MB of kernel memory
+    // HHDM space (0xFFFF800000000000+) is completely unmapped
+    reload_cr3()
+
+    w := sw.writer()
+    fmt.wprintln(w, "Initalized paging from %p to %p", rawptr(virtual_base), rawptr(physical_base))
+}
+
+reload_cr3 :: proc() {
+    if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
+        panic("Missing hhdm or executable_address_request response from limine")
+    }
+
+    virtual_base := limine.executable_address_request.response.virtual_base
+    physical_base := limine.executable_address_request.response.physical_base
+    cr3 := Cr3(0)
+    cr3.base = (uintptr(&page_map_level_4_entries[0]) - virtual_base + physical_base) >> 12
+    cpu.magic_breakpoint()
+    // PROBLEM 4: This activates incomplete page tables!
+    // After this point, HHDM access = instant page fault
+    cpu.set_cr3(u64(cr3))
+}
+
+bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
+    assert(physical_address % 4096 == 0)
+    
+    // PROBLEM 5: Creates custom virtual mapping but calls reload_cr3() AGAIN!
+    // This overwrites any HHDM mapping we might have had
+    virtual_base := limine.executable_address_request.response.virtual_base + (512 * PAGE_SIZE)
+    canonical_virtual_base := Canonical_Address(virtual_base)
+
+    assert(pages <= 512)
+
+    // PROBLEM 6: Modifying page tables after CR3 is already active
+    // This creates temporary inconsistent state
+    page_directory_entries[canonical_virtual_base.page_directory_offset] = {
+        address = uintptr(&bootstrap_page_table_entries[0]) >> 12,
+        present = true,
+        // MISSING: read_write = true
+        // MISSING: proper virtual->physical translation for address field
+    }
+
+    for i in 0..<pages {
+        bootstrap_page_table_entries[i] = {
+            address =    (physical_address >> 12) + uintptr(i),
+            present =    true,
+            read_write = true,
+        }
+    }
+
+    for i in pages..<512 {
+        bootstrap_page_table_entries[i] = {
+            present = false,
+        }
+    }
+
+    // PROBLEM 7: SECOND reload_cr3() call with still-incomplete mapping!
+    // Still no HHDM mapping, but now returns virtual address expecting it to work
+    reload_cr3()
+    w := sw.writer()
+
+    fmt.wprintfln(w, "Reserved %d pages for bootstraping from %p to %p", pages, rawptr(virtual_base), rawptr(physical_address))
+    
+    // PROBLEM 8: Returns custom virtual address that isn't properly mapped!
+    // Should return HHDM address, but HHDM space is unmapped = page fault
+    return virtual_base
+}
+
+/*
+ROOT CAUSE ANALYSIS:
+
+The fundamental issue was INCOMPLETE MEMORY MAPPING before CR3 switch.
+
+BROKEN SEQUENCE:
+1. init_minimal() sets up ONLY kernel mapping (~2MB)
+2. reload_cr3() activates incomplete page tables (HHDM unmapped)
+3. bootstrap_pages() called, should return HHDM address
+4. Instead returns custom virtual address, calls reload_cr3() AGAIN
+5. Later: mem.zero() tries to access HHDM address -> PAGE FAULT
+6. Page fault ISR tries to access unmapped memory -> DOUBLE FAULT  
+7. Double fault handler accesses unmapped memory -> TRIPLE FAULT
+8. CPU resets
+
+WORKING SEQUENCE (current implementation):
+1. setup_kernel_mapping() - map kernel space
+2. setup_identity_mapping() - map low memory (placeholder)
+3. setup_hhdm_mapping() - map ALL physical memory at HHDM offset
+4. reload_cr3() - activate COMPLETE page tables (all mappings ready)
+5. bootstrap_pages() returns HHDM address (now safely mapped)
+6. mem.zero() succeeds because HHDM space is properly mapped
+
+KEY LESSON: You MUST map ALL memory the kernel will access BEFORE switching CR3.
+The CPU doesn't know about Limine's mappings after the switch!
+*/
