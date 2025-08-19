@@ -51,6 +51,7 @@ init_minimal :: proc() {
     virtual_base := limine.executable_address_request.response.virtual_base
 
     canonical_virtual_base := Canonical_Address(virtual_base)
+    fmt.wprintfln(sw.writer(), "pb=%p vb=%p o=%p", rawptr(physical_base), rawptr(virtual_base), rawptr(limine.hhdm_request.response.offset))
 
     for i in 0..<512 {
         page_map_level_4_entries[i] = {
@@ -58,10 +59,8 @@ init_minimal :: proc() {
         }
     }
 
-    offset := limine.hhdm_request.response.offset
-
     page_map_level_4_entries[canonical_virtual_base.page_map_level_4_offset] = {
-        address = (uintptr(&page_directory_pointer_entries[0]) - offset) >> 12,
+        address = (uintptr(&page_directory_pointer_entries[0]) - virtual_base + physical_base) >> 12,
         present = true,
     }
 
@@ -72,7 +71,7 @@ init_minimal :: proc() {
     }
 
     page_directory_pointer_entries[canonical_virtual_base.page_directory_pointer_offset] = {
-        address = (uintptr(&page_directory_entries[0]) - offset) >> 12,
+        address = (uintptr(&page_directory_entries[0]) - virtual_base + physical_base) >> 12,
         present = true,
     }
 
@@ -83,7 +82,7 @@ init_minimal :: proc() {
     }
 
     page_directory_entries[canonical_virtual_base.page_directory_offset] = {
-        address = (uintptr(&page_table_entries[0]) - offset) >> 12,
+        address = (uintptr(&page_table_entries[0]) - virtual_base + physical_base) >> 12,
         present = true,
     }
 
@@ -102,14 +101,14 @@ init_minimal :: proc() {
 }
 
 reload_cr3 :: proc() {
-    if limine.hhdm_request.response == nil {
-        panic("Missing hhdm response from limine")
+    if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
+        panic("Missing hhdm or executable_address_request response from limine")
     }
 
-    offset := limine.hhdm_request.response.offset
-    fmt.wprintfln(sw.writer(), "PML4 %p without useless bits=%p : offset=%X,orignal=%p", rawptr(uintptr(&page_map_level_4_entries[0]) - offset),  rawptr((uintptr(&page_map_level_4_entries[0]) - offset) & 0xFFFFFFFFFFFF000), offset, &page_map_level_4_entries[0])
-    cr3 := Cr3(cpu.get_cr3())
-    cr3.base = (uintptr(&page_map_level_4_entries[0]) - offset) >> 12
+    virtual_base := limine.executable_address_request.response.virtual_base
+    physical_base := limine.executable_address_request.response.physical_base
+    cr3 := Cr3(0)
+    cr3.base = (uintptr(&page_map_level_4_entries[0]) - virtual_base + physical_base) >> 12
     cpu.magic_breakpoint()
     cpu.set_cr3(u64(cr3))
 }

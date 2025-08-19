@@ -61,6 +61,10 @@ run ld bin/*.o -o bin/kronos.elf \
     -z max-page-size=0x1000  \
     -T kernel/link.ld
 
+nm -n --defined-only iso_root/boot/kronos \
+| awk '/ [tTdDbBrR] / && $3 !~ /^\./ { print $1, $3 }' \
+> bin/kronos.sym
+
 step "==> Building limine"
 make -C limine
 
