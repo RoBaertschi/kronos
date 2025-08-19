@@ -46,6 +46,7 @@ run odin build kernel -out:bin/kernel   \
     -strict-style
     # -foreign-error-procedures       \
 
+run nasm kernel/entry_point.asm -o bin/kronos-entry_point.asm.o -f elf64 -g
 run nasm kernel/cpu/cpu.asm -o bin/kronos-cpu.asm.o -f elf64 -g
 run nasm kernel/serial/serial.asm -o bin/kronos-serial.asm.o -f elf64 -g
 run nasm kernel/idt/idt.asm -o bin/kronos-idt.asm.o -f elf64 -g

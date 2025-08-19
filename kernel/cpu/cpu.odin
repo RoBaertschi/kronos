@@ -10,6 +10,7 @@ foreign cpu {
     get_cr3 :: proc "sysv" () -> u64 ---
     set_cr3 :: proc "sysv" (val: u64) ---
     get_cr2 :: proc "sysv" () -> u64 ---
+    get_rsp :: proc "sysv" () -> uintptr ---
     magic_breakpoint :: proc "sysv" () ---
 }
 

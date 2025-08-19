@@ -46,6 +46,11 @@ set_cr3:
     mov cr3, rdi
     ret
 
+get_rsp:
+    mov rax, rsp
+    sub rax, 8
+    ret
+
 ; di  limit
 ; rsi base
 set_gdt:

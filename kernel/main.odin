@@ -87,11 +87,8 @@ print_memmap :: proc(w: io.Writer) {
     }
 }
 
-
-@(export, link_name="_start")
-kmain :: proc "sysv" () {
-    cpu.enable_sse()
-
+@(export, link_name="kmain")
+kmain :: proc "sysv" (rsp: uintptr) {
     context = runtime.default_context()
     if serial.init() {
         serial.write_string("Hello World!\n")
