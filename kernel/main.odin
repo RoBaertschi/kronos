@@ -100,7 +100,7 @@ kmain :: proc "sysv" (rsp: uintptr) {
 
     gdt.init()
     idt.init()
-    paging.init_minimal()
+    paging.init_minimal(rsp)
 
     print_memmap(writer)
     memmap_entry := find_first_ideal_memmap_entry()
