@@ -69,6 +69,42 @@ find_stack_memmap :: proc(stack_pointer: uintptr) -> (pos: uintptr, len: u64) {
     panic("Could not find the stack in the memmap")
 }
 
+print_current_paging :: proc() {
+    cr3 := Cr3(cpu.get_cr3())
+    pml4 := (^[512]cpu.Page_Map_Level_4_Entry)((cr3.base << 12) + offset)
+
+    w := sw.writer()
+    for pml4_entry, pml4_index in pml4 {
+        if pml4_entry.present {
+            fmt.wprintfln(w, "Start PML4 %X", pml4_index)
+            pdp := (^[512]cpu.Page_Directory_Pointer_Entry)((uintptr(pml4_entry.address) << 12) + offset)
+
+            for pdp_entry, pdp_index in pdp {
+                if pdp_entry.present {
+                    fmt.wprintfln(w, "Start PDP %X", pdp_index)
+
+                    pd := (^[512]cpu.Page_Directory_Entry)((uintptr(pdp_entry.address) << 12) + offset)
+
+                    for pd_entry, pd_index in pd {
+                        if pd_entry.present {
+                            fmt.wprintfln(w, "Start PD %X present=%v", pd_index, pd_entry.present)
+                            pt := (^[512]cpu.Page_Table_Entry)((uintptr(pd_entry.address) << 12) + offset)
+
+                            for page in pt {
+                                fmt.wprintf(w, "%s", page.present ? "#" : ".")
+                                // fmt.wprintfln(w, "Page %X present=%v", page_index, page.present)
+                            }
+                            fmt.wprintfln(w, "\nEnd PD %X", pd_index)
+                        }
+                    }
+                    fmt.wprintfln(w, "End PD %X", pdp_index)
+                }
+            }
+            fmt.wprintfln(w, "End PML4 %X", pml4_index)
+        }
+    }
+}
+
 init_minimal :: proc(stack_pointer: uintptr) {
     stack_pointer := stack_pointer
     stack_pointer -= 64 * runtime.Kilobyte
@@ -77,6 +113,8 @@ init_minimal :: proc(stack_pointer: uintptr) {
     offset = limine.hhdm_request.response.offset
     physical_base = limine.executable_address_request.response.physical_base
     virtual_base = limine.executable_address_request.response.virtual_base
+
+    print_current_paging()
 
     physical_stack, physical_stack_length := find_stack_memmap(stack_pointer)
     stack_pointer = physical_stack + offset
