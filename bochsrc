@@ -18,6 +18,7 @@ mouse: enabled=1
 
 magic_break: enabled=1
 
+debug: cpu0=report
 debug_symbols: file=./bin/kronos.sym
 
 # sound: driver=dummy

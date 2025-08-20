@@ -8,6 +8,7 @@ extern enable_sse
 
 _start:
     mov rdi, rsp
+    sub rdi, 8 ; pop the pushed return address
 
     push rbp
     mov rbp, rsp

@@ -47,39 +47,69 @@ Cr3 :: bit_field u64 {
     _: u16 | 12,
 }
 
+offset, physical_base, virtual_base: uintptr
+
+find_stack_memmap :: proc(stack_pointer: uintptr) -> (pos: uintptr, len: u64) {
+    memmap := limine.memmap_request.response
+
+    if memmap == nil {
+        panic("No Memmap")
+    }
+
+    memmap_entries := memmap.entries[:memmap.entry_count]
+    for entry in memmap_entries {
+        if entry.type == .Bootloader_Reclaimable {
+            if entry.base <= (stack_pointer - offset) && (stack_pointer - offset) <= entry.base + uintptr(entry.length) {
+                fmt.wprintfln(sw.writer(), "Found stack in bootloader reclaimable memory at %p", rawptr(entry.base))
+                return entry.base, entry.length
+            }
+        }
+    }
+
+    panic("Could not find the stack in the memmap")
+}
+
 init_minimal :: proc(stack_pointer: uintptr) {
+    stack_pointer := stack_pointer
+
+    offset = limine.hhdm_request.response.offset
+    physical_base = limine.executable_address_request.response.physical_base
+    virtual_base = limine.executable_address_request.response.virtual_base
+
+    physical_stack, physical_stack_length := find_stack_memmap(stack_pointer)
+
+    assert(physical_stack_length <= PAGE_SIZE * 512)
+
     if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
         panic("Missing required limine responses")
     }
-
-    offset := limine.hhdm_request.response.offset
-
-    physical_base := limine.executable_address_request.response.physical_base
-    virtual_base := limine.executable_address_request.response.virtual_base
-
-    canonical_stack_base := Canonical_Address(stack_pointer)
-    canonical_virtual_base := Canonical_Address(virtual_base)
     fmt.wprintfln(sw.writer(), "pb=%p vb=%p o=%p", rawptr(physical_base), rawptr(virtual_base), rawptr(limine.hhdm_request.response.offset))
 
+    fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(uintptr(virtual_base)), rawptr(((physical_base >> 12) + uintptr(0)) << 12))
     for i in 0..<512 {
-        map_pages((physical_base >> 12) + uintptr(i),
-            Canonical_Address(virtual_base + uintptr(i)),
-            
+        map_pages(((physical_base >> 12) + uintptr(i)) << 12,
+            Canonical_Address(virtual_base + uintptr(i * PAGE_SIZE)),
+            &page_directory_pointer_entries,
+            &page_directory_entries,
+            &page_table_entries,
         )
     }
 
-    for &entry, i in page_table_entries {
-        entry = {
-            address =    (physical_base >> 12) + uintptr(i),
-            present =    true,
-            read_write = true,
-        }
+    fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(uintptr(stack_pointer - (stack_pointer - offset - physical_stack))), rawptr(((physical_stack >> 12) + uintptr(0)) << 12))
+    for i in 0..<min(512, physical_stack_length / PAGE_SIZE) {
+        map_pages(
+            ((physical_stack >> 12) + uintptr(i)) << 12,
+            Canonical_Address((stack_pointer - (stack_pointer - offset - physical_stack)) + uintptr(i * PAGE_SIZE)),
+            &stack_page_directory_pointer_entries,
+            &stack_page_directory_entries,
+            &stack_page_table_entries,
+        )
     }
 
     reload_cr3()
 
     w := sw.writer()
-    fmt.wprintln(w, "Initalized paging from %p to %p", rawptr(virtual_base), rawptr(physical_base))
+    fmt.wprintfln(w, "Initalized paging from %p to %p", rawptr(virtual_base), rawptr(physical_base))
 }
 
 map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
@@ -87,10 +117,9 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
     dir_entries: ^[512]cpu.Page_Directory_Entry,
     table_entries: ^[512]cpu.Page_Table_Entry,
 ) {
-    fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(uintptr(virtual_address)), rawptr(physical_address))
-
-    physical_base := limine.executable_address_request.response.physical_base
-    virtual_base := limine.executable_address_request.response.virtual_base
+    dir_ptr_entries := dir_ptr_entries
+    dir_entries := dir_entries
+    table_entries := table_entries
 
     pml4_entry := &page_map_level_4_entries[virtual_address.page_map_level_4_offset]
     if !pml4_entry.present {
@@ -98,6 +127,8 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
             address = (uintptr(&dir_ptr_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
         }
+    } else {
+        dir_ptr_entries = cast(^[512]cpu.Page_Directory_Pointer_Entry)((pml4_entry.address << 12) - physical_base + virtual_base)
     }
 
     pdp_entry := &dir_ptr_entries[virtual_address.page_directory_pointer_offset]
@@ -106,6 +137,8 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
             address = (uintptr(&dir_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
         }
+    } else {
+        dir_entries = cast(^[512]cpu.Page_Directory_Entry)((pdp_entry.address << 12) - physical_base + virtual_base)
     }
 
     pd_entry := &dir_entries[virtual_address.page_directory_offset]
@@ -114,9 +147,12 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
             address = (uintptr(&table_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
         }
+    } else {
+        table_entries = cast(^[512]cpu.Page_Table_Entry)((pd_entry.address << 12) - physical_base + virtual_base)
     }
 
-    page_table_entries[virtual_address.page_table_offset] = {
+    // fmt.wprintln(sw.writer(), virtual_address, physical_address)
+    table_entries[virtual_address.page_table_offset] = {
         address    = physical_base >> 12,
         present    = true,
         read_write = true,
@@ -128,8 +164,6 @@ reload_cr3 :: proc() {
         panic("Missing hhdm or executable_address_request response from limine")
     }
 
-    virtual_base := limine.executable_address_request.response.virtual_base
-    physical_base := limine.executable_address_request.response.physical_base
     cr3 := Cr3(0)
     cr3.base = (uintptr(&page_map_level_4_entries[0]) - virtual_base + physical_base) >> 12
     cpu.magic_breakpoint()
@@ -138,7 +172,6 @@ reload_cr3 :: proc() {
 
 bootstrap_pages :: proc(physical_address: uintptr, pages: int) -> uintptr {
     assert(physical_address % 4096 == 0)
-    virtual_base := limine.executable_address_request.response.virtual_base + (512 * PAGE_SIZE)
     canonical_virtual_base := Canonical_Address(virtual_base)
 
     assert(pages <= 512)

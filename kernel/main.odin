@@ -59,10 +59,11 @@ find_first_ideal_memmap_entry :: proc() -> ^limine.Memmap_Entry {
     }
 }
 
-print_memmap :: proc(w: io.Writer) {
+print_memmap :: proc(w: io.Writer, stack_pointer: uintptr) {
     response := limine.memmap_request.response
+    offset := limine.hhdm_request.response.offset
     if response == nil {
-        runtime.print_string("No Memmap\n")
+        panic("No Memmap")
     } else {
         entries := response.entries[:response.entry_count]
         total_accessible_memory: u64
@@ -79,7 +80,12 @@ print_memmap :: proc(w: io.Writer) {
 
             #partial switch entry.type {
             case .Usable: total_accessible_memory += entry.length
-            case .Acpi_Reclaimable, .Bootloader_Reclaimable: total_reclaimable_memory += entry.length
+            case .Acpi_Reclaimable: total_reclaimable_memory += entry.length
+            case .Bootloader_Reclaimable:
+                total_reclaimable_memory += entry.length
+                if entry.base <= (stack_pointer - offset) && (stack_pointer - offset) <= entry.base + uintptr(entry.length) {
+                    fmt.wprintfln(w, "Found stack in bootloader reclaimable memory at %p", rawptr(entry.base))
+                }
             }
         }
 
@@ -100,9 +106,9 @@ kmain :: proc "sysv" (rsp: uintptr) {
 
     gdt.init()
     idt.init()
+    print_memmap(writer, rsp)
     paging.init_minimal(rsp)
 
-    print_memmap(writer)
     memmap_entry := find_first_ideal_memmap_entry()
     bootstrap_pages := paging.bootstrap_pages(memmap_entry.base, int(memmap_entry.length) / paging.PAGE_SIZE)
 
