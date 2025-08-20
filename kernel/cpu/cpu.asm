@@ -43,7 +43,13 @@ get_cr3:
     ret
 
 set_cr3:
+    push rbp
+    mov rbp, rsp
+
     mov cr3, rdi
+
+    mov rsp, rbp
+    pop rbp
     ret
 
 get_rsp:

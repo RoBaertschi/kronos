@@ -71,19 +71,22 @@ find_stack_memmap :: proc(stack_pointer: uintptr) -> (pos: uintptr, len: u64) {
 
 init_minimal :: proc(stack_pointer: uintptr) {
     stack_pointer := stack_pointer
+    stack_pointer -= 64 * runtime.Kilobyte
 
+    w := sw.writer()
     offset = limine.hhdm_request.response.offset
     physical_base = limine.executable_address_request.response.physical_base
     virtual_base = limine.executable_address_request.response.virtual_base
 
     physical_stack, physical_stack_length := find_stack_memmap(stack_pointer)
+    stack_pointer = physical_stack + offset
 
     assert(physical_stack_length <= PAGE_SIZE * 512)
 
     if limine.executable_address_request.response == nil || limine.hhdm_request.response == nil {
         panic("Missing required limine responses")
     }
-    fmt.wprintfln(sw.writer(), "pb=%p vb=%p o=%p", rawptr(physical_base), rawptr(virtual_base), rawptr(limine.hhdm_request.response.offset))
+    fmt.wprintfln(w, "pb=%p vb=%p o=%p", rawptr(physical_base), rawptr(virtual_base), rawptr(limine.hhdm_request.response.offset))
 
     fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(uintptr(virtual_base)), rawptr(((physical_base >> 12) + uintptr(0)) << 12))
     for i in 0..<512 {
@@ -95,11 +98,11 @@ init_minimal :: proc(stack_pointer: uintptr) {
         )
     }
 
-    fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(uintptr(stack_pointer - (stack_pointer - offset - physical_stack))), rawptr(((physical_stack >> 12) + uintptr(0)) << 12))
+    fmt.wprintfln(sw.writer(), "Mapping from %p to %p", rawptr(stack_pointer), rawptr((physical_stack >> 12) << 12))
     for i in 0..<min(512, physical_stack_length / PAGE_SIZE) {
         map_pages(
             ((physical_stack >> 12) + uintptr(i)) << 12,
-            Canonical_Address((stack_pointer - (stack_pointer - offset - physical_stack)) + uintptr(i * PAGE_SIZE)),
+            Canonical_Address(((stack_pointer >> 12) + uintptr(i)) << 12),
             &stack_page_directory_pointer_entries,
             &stack_page_directory_entries,
             &stack_page_table_entries,
@@ -108,7 +111,6 @@ init_minimal :: proc(stack_pointer: uintptr) {
 
     reload_cr3()
 
-    w := sw.writer()
     fmt.wprintfln(w, "Initalized paging from %p to %p", rawptr(virtual_base), rawptr(physical_base))
 }
 
@@ -126,6 +128,7 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
         pml4_entry^ = {
             address = (uintptr(&dir_ptr_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
+            read_write = true,
         }
     } else {
         dir_ptr_entries = cast(^[512]cpu.Page_Directory_Pointer_Entry)((pml4_entry.address << 12) - physical_base + virtual_base)
@@ -136,6 +139,7 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
         pdp_entry^ = {
             address = (uintptr(&dir_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
+            read_write = true,
         }
     } else {
         dir_entries = cast(^[512]cpu.Page_Directory_Entry)((pdp_entry.address << 12) - physical_base + virtual_base)
@@ -146,12 +150,13 @@ map_pages :: proc(physical_address: uintptr, virtual_address: Canonical_Address,
         pd_entry^ = {
             address = (uintptr(&table_entries[0]) - virtual_base + physical_base) >> 12,
             present = true,
+            read_write = true,
         }
     } else {
         table_entries = cast(^[512]cpu.Page_Table_Entry)((pd_entry.address << 12) - physical_base + virtual_base)
     }
 
-    // fmt.wprintln(sw.writer(), virtual_address, physical_address)
+    fmt.wprintfln(sw.writer(), "%v -> %p", virtual_address, rawptr(physical_address))
     table_entries[virtual_address.page_table_offset] = {
         address    = physical_base >> 12,
         present    = true,
@@ -164,7 +169,7 @@ reload_cr3 :: proc() {
         panic("Missing hhdm or executable_address_request response from limine")
     }
 
-    cr3 := Cr3(0)
+    cr3 := Cr3(cpu.get_cr3())
     cr3.base = (uintptr(&page_map_level_4_entries[0]) - virtual_base + physical_base) >> 12
     cpu.magic_breakpoint()
     cpu.set_cr3(u64(cr3))

@@ -17,9 +17,14 @@ else
 fi
 
 
-qemu-system-x86_64   \
-    $EXTRA_ARGS      \
-    -M q35           \
-    -cdrom image.iso \
-    -boot d          \
+qemu-system-x86_64          \
+    $EXTRA_ARGS             \
+    -M q35                  \
+    -cdrom image.iso        \
+    -boot d                 \
+    -d int,cpu_reset        \
+    -D /tmp/qemu.log        \
+    -action panic=pause     \
+    -action reboot=shutdown \
+    -action shutdown=pause  \
     -m 2G
